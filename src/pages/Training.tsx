@@ -27,7 +27,7 @@ const Training = () => {
       name: ex.name,
       sets: Array(ex.sets).fill(null).map((_, i) => ({
         weight: ex.weight || 0,
-        reps: ex.reps,
+        reps: typeof ex.reps === 'string' ? parseInt(ex.reps) || 1 : ex.reps,
         rpe: null,
         completed: false
       })),
@@ -73,7 +73,7 @@ const Training = () => {
         name: ex.name,
         sets: Array(ex.sets).fill(null).map(() => ({
           weight: ex.weight || 0,
-          reps: ex.reps,
+          reps: typeof ex.reps === 'string' ? parseInt(ex.reps) || 1 : ex.reps,
           rpe: null,
           completed: false
         })),
@@ -88,7 +88,12 @@ const Training = () => {
     if (!currentEx || !activeWorkout) return;
 
     const setData = currentEx.sets[setIndex];
-    await logSet(currentExercise, setIndex, { ...setData, completed: true });
+    const normalizedSetData = {
+      ...setData,
+      reps: typeof setData.reps === 'string' ? parseInt(setData.reps) || 1 : setData.reps,
+      completed: true
+    };
+    await logSet(currentExercise, setIndex, normalizedSetData);
     
     // Start rest timer
     setRestTime(currentEx.restTime);
