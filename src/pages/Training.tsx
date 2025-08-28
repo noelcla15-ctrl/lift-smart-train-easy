@@ -9,9 +9,10 @@ import { Link } from "react-router-dom";
 import { BottomNav } from "@/components/BottomNav";
 import { AuthGuard } from "@/components/AuthGuard";
 import { WorkoutSummary } from "@/components/WorkoutSummary";
+import { SetLoggingModal } from "@/components/SetLoggingModal";
 import { useState, useEffect } from "react";
 import { useWorkoutGeneration } from "@/hooks/useWorkoutGeneration";
-import { useWorkoutSession } from "@/hooks/useWorkoutSession";
+import { useWorkoutSession, WorkoutSet } from "@/hooks/useWorkoutSession";
 import { toast } from "@/hooks/use-toast";
 
 const Training = () => {
@@ -117,16 +118,10 @@ const Training = () => {
     });
   };
 
-  const handleLogSet = async (setIndex: number) => {
+  const handleLogSet = async (setIndex: number, setData: Partial<WorkoutSet>) => {
     if (!currentEx || !activeWorkout) return;
 
-    const setData = currentEx.sets[setIndex];
-    const normalizedSetData = {
-      ...setData,
-      reps: typeof setData.reps === 'string' ? parseInt(setData.reps) || 1 : setData.reps,
-      completed: true
-    };
-    await logSet(currentExercise, setIndex, normalizedSetData);
+    await logSet(currentExercise, setIndex, setData);
     
     // Start rest timer
     setRestTime(currentEx.restTime);
@@ -204,31 +199,41 @@ const Training = () => {
       <main className="container mx-auto p-4 pb-20 space-y-6">
         {/* Pre-Workout Summary */}
         {!activeWorkout && todaysWorkout && (
-          <div className="space-y-4">
-            <WorkoutSummary workout={todaysWorkout} />
-            <Card className="shadow-card">
-              <CardContent className="pt-6 text-center">
-                <Button 
-                  onClick={handleStartWorkout} 
-                  disabled={sessionLoading}
-                  className="w-full bg-gradient-primary"
-                  size="lg"
-                >
-                  {sessionLoading ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Starting Workout...
-                    </>
-                  ) : (
-                    <>
-                      <Target className="h-4 w-4 mr-2" />
-                      Start Workout
-                    </>
-                  )}
-                </Button>
-              </CardContent>
-            </Card>
-          </div>
+          <Card className="shadow-card">
+            <CardHeader>
+              <CardTitle className="text-xl">{todaysWorkout.name}</CardTitle>
+              <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                <div className="flex items-center gap-1">
+                  <Target className="h-4 w-4" />
+                  {todaysWorkout.exercises.length} exercises
+                </div>
+                <div className="flex items-center gap-1">
+                  <Timer className="h-4 w-4" />
+                  {todaysWorkout.estimatedDuration} min
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="text-center">
+              <Button 
+                onClick={handleStartWorkout} 
+                disabled={sessionLoading}
+                className="w-full bg-gradient-primary"
+                size="lg"
+              >
+                {sessionLoading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Starting Workout...
+                  </>
+                ) : (
+                  <>
+                    <Target className="h-4 w-4 mr-2" />
+                    Start Workout
+                  </>
+                )}
+              </Button>
+            </CardContent>
+          </Card>
         )}
 
         {/* Active Workout Summary Toggle */}
@@ -296,14 +301,19 @@ const Training = () => {
                         Done
                       </Badge>
                     ) : (
-                      <Button 
-                        size="sm" 
-                        variant="outline"
-                        onClick={() => handleLogSet(index)}
-                        disabled={!activeWorkout}
+                      <SetLoggingModal
+                        setData={set}
+                        setIndex={index}
+                        onLogSet={handleLogSet}
                       >
-                        Log Set
-                      </Button>
+                        <Button 
+                          size="sm" 
+                          variant="outline"
+                          disabled={!activeWorkout}
+                        >
+                          Log Set
+                        </Button>
+                      </SetLoggingModal>
                     )}
                   </div>
                 </div>
@@ -350,6 +360,7 @@ const Training = () => {
                   <Button 
                     className="flex-1 bg-gradient-primary" 
                     onClick={() => setCurrentExercise(currentExercise + 1)}
+                    size="lg"
                   >
                     Next Exercise
                   </Button>
@@ -358,6 +369,7 @@ const Training = () => {
                     className="flex-1 bg-gradient-accent"
                     onClick={handleFinishWorkout}
                     disabled={sessionLoading}
+                    size="lg"
                   >
                     {sessionLoading ? (
                       <>
