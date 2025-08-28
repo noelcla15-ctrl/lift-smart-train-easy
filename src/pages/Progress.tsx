@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TrendingUp, Target, Calendar, Camera, Weight, Ruler } from "lucide-react";
 import { BottomNav } from "@/components/BottomNav";
+import { AuthGuard } from "@/components/AuthGuard";
 
 const ProgressPage = () => {
   // Mock data for demonstration
@@ -28,7 +29,7 @@ const ProgressPage = () => {
     { metric: "Chest", value: "42 in", change: "+0.5 in", trend: "up" }
   ];
 
-  return (
+  const progressContent = (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-muted/30 pb-20">
       {/* Header */}
       <div className="bg-card border-b shadow-card">
@@ -224,6 +225,12 @@ const ProgressPage = () => {
 
       <BottomNav />
     </div>
+  );
+
+  return (
+    <AuthGuard>
+      {progressContent}
+    </AuthGuard>
   );
 };
 

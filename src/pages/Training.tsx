@@ -5,6 +5,7 @@ import { Separator } from "@/components/ui/separator";
 import { ChevronLeft, Timer, Check, Plus, RotateCcw } from "lucide-react";
 import { Link } from "react-router-dom";
 import { BottomNav } from "@/components/BottomNav";
+import { AuthGuard } from "@/components/AuthGuard";
 import { useState } from "react";
 
 const Training = () => {
@@ -50,7 +51,7 @@ const Training = () => {
 
   const currentEx = workout.exercises[currentExercise];
 
-  return (
+  const trainingContent = (
     <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="sticky top-0 z-50 bg-card border-b shadow-sm">
@@ -193,22 +194,16 @@ const Training = () => {
             </div>
           </CardContent>
         </Card>
-
-        {/* Setup Warning */}
-        <Card className="shadow-card border-fitness-warning/20 bg-fitness-warning/5">
-          <CardContent className="pt-6">
-            <div className="text-center space-y-2">
-              <div className="text-sm font-medium text-fitness-warning">Demo Mode</div>
-              <div className="text-xs text-muted-foreground">
-                Connect to Supabase to save your workout progress
-              </div>
-            </div>
-          </CardContent>
-        </Card>
       </main>
 
       <BottomNav />
     </div>
+  );
+
+  return (
+    <AuthGuard>
+      {trainingContent}
+    </AuthGuard>
   );
 };
 

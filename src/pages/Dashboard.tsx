@@ -5,9 +5,14 @@ import { Badge } from "@/components/ui/badge";
 import { Dumbbell, Play, Target, TrendingUp, Calendar, Clock } from "lucide-react";
 import { Link } from "react-router-dom";
 import { BottomNav } from "@/components/BottomNav";
+import { UserMenu } from "@/components/UserMenu";
+import { useAuth } from "@/contexts/AuthContext";
+import { AuthGuard } from "@/components/AuthGuard";
 
 const Dashboard = () => {
-  return (
+  const { user } = useAuth();
+
+  const dashboardContent = (
     <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="sticky top-0 z-50 bg-gradient-hero shadow-card">
@@ -17,9 +22,12 @@ const Dashboard = () => {
               <Dumbbell className="h-8 w-8 text-white" />
               <h1 className="text-2xl font-bold text-white">FitSmart</h1>
             </div>
-            <Badge variant="secondary" className="bg-white/20 text-white border-white/30">
-              Week 3, Day 2
-            </Badge>
+            <div className="flex items-center gap-3">
+              <Badge variant="secondary" className="bg-white/20 text-white border-white/30">
+                Week 3, Day 2
+              </Badge>
+              <UserMenu />
+            </div>
           </div>
         </div>
       </header>
@@ -122,27 +130,35 @@ const Dashboard = () => {
           </Card>
         </div>
 
-        {/* Setup Reminder - Show this if backend not connected */}
-        <Card className="shadow-card border-fitness-warning/20 bg-fitness-warning/5">
-          <CardContent className="pt-6">
-            <div className="text-center space-y-3">
-              <Calendar className="h-8 w-8 text-fitness-warning mx-auto" />
-              <div>
-                <div className="font-semibold text-fitness-warning">Complete Your Setup</div>
-                <div className="text-sm text-muted-foreground">Connect to database to save your workouts and track progress</div>
+        {/* Setup Reminder - Show if not authenticated or missing data */}
+        {!user && (
+          <Card className="shadow-card border-fitness-warning/20 bg-fitness-warning/5">
+            <CardContent className="pt-6">
+              <div className="text-center space-y-3">
+                <Calendar className="h-8 w-8 text-fitness-warning mx-auto" />
+                <div>
+                  <div className="font-semibold text-fitness-warning">Sign In Required</div>
+                  <div className="text-sm text-muted-foreground">Sign in to save your workouts and track progress</div>
+                </div>
+                <Link to="/auth">
+                  <Button variant="outline" className="border-fitness-warning text-fitness-warning hover:bg-fitness-warning hover:text-white">
+                    Sign In / Sign Up
+                  </Button>
+                </Link>
               </div>
-              <Link to="/setup">
-                <Button variant="outline" className="border-fitness-warning text-fitness-warning hover:bg-fitness-warning hover:text-white">
-                  Complete Setup
-                </Button>
-              </Link>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        )}
       </main>
 
       <BottomNav />
     </div>
+  );
+
+  return (
+    <AuthGuard fallback={dashboardContent}>
+      {dashboardContent}
+    </AuthGuard>
   );
 };
 
