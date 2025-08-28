@@ -2,54 +2,130 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { ChevronLeft, Timer, Check, Plus, RotateCcw } from "lucide-react";
+import { ChevronLeft, Timer, Check, Plus, RotateCcw, Loader2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { BottomNav } from "@/components/BottomNav";
 import { AuthGuard } from "@/components/AuthGuard";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useWorkoutGeneration } from "@/hooks/useWorkoutGeneration";
+import { useWorkoutSession } from "@/hooks/useWorkoutSession";
+import { toast } from "@/hooks/use-toast";
 
 const Training = () => {
+  const { todaysWorkout, isLoading: loadingWorkout } = useWorkoutGeneration();
+  const { activeWorkout, isLoading: sessionLoading, startWorkout, logSet, completeWorkout } = useWorkoutSession();
+  
   const [currentExercise, setCurrentExercise] = useState(0);
   const [isResting, setIsResting] = useState(false);
   const [restTime, setRestTime] = useState(90);
+  const [restTimer, setRestTimer] = useState<NodeJS.Timeout | null>(null);
 
-  const workout = {
-    name: "Upper Body - Hypertrophy",
-    exercises: [
-      {
-        name: "Bench Press",
-        sets: [
-          { weight: 135, reps: 8, rpe: null, completed: false },
-          { weight: 155, reps: 6, rpe: null, completed: false },
-          { weight: 165, reps: 5, rpe: null, completed: false },
-        ],
-        restTime: 180,
-        notes: "Focus on controlled tempo"
-      },
-      {
-        name: "Pull-ups",
-        sets: [
-          { weight: 0, reps: 8, rpe: null, completed: false },
-          { weight: 0, reps: 7, rpe: null, completed: false },
-          { weight: 0, reps: 6, rpe: null, completed: false },
-        ],
-        restTime: 120,
-        notes: "Full range of motion"
-      },
-      {
-        name: "Dumbbell Shoulder Press",
-        sets: [
-          { weight: 45, reps: 10, rpe: null, completed: false },
-          { weight: 45, reps: 9, rpe: null, completed: false },
-          { weight: 40, reps: 10, rpe: null, completed: false },
-        ],
-        restTime: 90,
-        notes: ""
-      }
-    ]
+  // Use active workout or today's generated workout
+  const workout = activeWorkout || (todaysWorkout ? {
+    name: todaysWorkout.name,
+    exercises: todaysWorkout.exercises.map(ex => ({
+      name: ex.name,
+      sets: Array(ex.sets).fill(null).map((_, i) => ({
+        weight: ex.weight || 0,
+        reps: ex.reps,
+        rpe: null,
+        completed: false
+      })),
+      restTime: ex.restTime,
+      notes: ex.notes || "",
+      exerciseId: ex.exerciseId
+    }))
+  } : null);
+
+  const currentEx = workout?.exercises[currentExercise];
+
+  // Start rest timer
+  useEffect(() => {
+    if (isResting && restTime > 0) {
+      const timer = setTimeout(() => {
+        setRestTime(prev => {
+          if (prev <= 1) {
+            setIsResting(false);
+            toast({
+              title: "Rest Complete!",
+              description: "Time to get back to work!",
+            });
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+      setRestTimer(timer);
+    }
+
+    return () => {
+      if (restTimer) clearTimeout(restTimer);
+    };
+  }, [isResting, restTime]);
+
+  const handleStartWorkout = async () => {
+    if (!todaysWorkout) return;
+    
+    await startWorkout({
+      name: todaysWorkout.name,
+      exercises: todaysWorkout.exercises.map(ex => ({
+        id: ex.id,
+        name: ex.name,
+        sets: Array(ex.sets).fill(null).map(() => ({
+          weight: ex.weight || 0,
+          reps: ex.reps,
+          rpe: null,
+          completed: false
+        })),
+        restTime: ex.restTime,
+        notes: ex.notes || "",
+        exerciseId: ex.exerciseId
+      }))
+    });
   };
 
-  const currentEx = workout.exercises[currentExercise];
+  const handleLogSet = async (setIndex: number) => {
+    if (!currentEx || !activeWorkout) return;
+
+    const setData = currentEx.sets[setIndex];
+    await logSet(currentExercise, setIndex, { ...setData, completed: true });
+    
+    // Start rest timer
+    setRestTime(currentEx.restTime);
+    setIsResting(true);
+  };
+
+  const handleFinishWorkout = async () => {
+    await completeWorkout();
+  };
+
+  if (loadingWorkout) {
+    return (
+      <AuthGuard>
+        <div className="min-h-screen bg-background flex items-center justify-center">
+          <div className="text-center space-y-4">
+            <Loader2 className="h-8 w-8 animate-spin mx-auto" />
+            <p className="text-muted-foreground">Loading your workout...</p>
+          </div>
+        </div>
+      </AuthGuard>
+    );
+  }
+
+  if (!workout && !todaysWorkout) {
+    return (
+      <AuthGuard>
+        <div className="min-h-screen bg-background flex items-center justify-center">
+          <div className="text-center space-y-4">
+            <p className="text-muted-foreground">No workout available today.</p>
+            <Link to="/settings">
+              <Button>Set Up Your Program</Button>
+            </Link>
+          </div>
+        </div>
+      </AuthGuard>
+    );
+  }
 
   const trainingContent = (
     <div className="min-h-screen bg-background">
@@ -64,26 +140,57 @@ const Training = () => {
                 </Button>
               </Link>
               <div>
-                <h1 className="font-semibold">{workout.name}</h1>
-                <p className="text-sm text-muted-foreground">Exercise {currentExercise + 1} of {workout.exercises.length}</p>
+                <h1 className="font-semibold">{workout?.name || 'Today\'s Workout'}</h1>
+                <p className="text-sm text-muted-foreground">
+                  Exercise {currentExercise + 1} of {workout?.exercises.length || 0}
+                </p>
               </div>
             </div>
             <Badge variant="secondary" className="bg-fitness-primary/10 text-fitness-primary">
-              {isResting ? `Rest: ${restTime}s` : 'Working'}
+              {isResting ? `Rest: ${restTime}s` : activeWorkout ? 'Working' : 'Ready to Start'}
             </Badge>
           </div>
         </div>
       </header>
 
       <main className="container mx-auto p-4 pb-20 space-y-6">
+        {/* Start Workout Button */}
+        {!activeWorkout && todaysWorkout && (
+          <Card className="shadow-card">
+            <CardContent className="pt-6 text-center space-y-4">
+              <div>
+                <h2 className="text-xl font-semibold">{todaysWorkout.name}</h2>
+                <p className="text-muted-foreground">
+                  {todaysWorkout.exercises.length} exercises • ~{todaysWorkout.estimatedDuration} min
+                </p>
+              </div>
+              <Button 
+                onClick={handleStartWorkout} 
+                disabled={sessionLoading}
+                className="w-full bg-gradient-primary"
+              >
+                {sessionLoading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Starting...
+                  </>
+                ) : (
+                  'Start Workout'
+                )}
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Current Exercise */}
-        <Card className="shadow-card">
-          <CardHeader>
-            <CardTitle className="text-xl">{currentEx.name}</CardTitle>
-            {currentEx.notes && (
-              <CardDescription>{currentEx.notes}</CardDescription>
-            )}
-          </CardHeader>
+        {currentEx && (
+          <Card className="shadow-card">
+            <CardHeader>
+              <CardTitle className="text-xl">{currentEx.name}</CardTitle>
+              {currentEx.notes && (
+                <CardDescription>{currentEx.notes}</CardDescription>
+              )}
+            </CardHeader>
           <CardContent className="space-y-4">
             {/* Sets */}
             <div className="space-y-3">
@@ -111,7 +218,12 @@ const Training = () => {
                         Done
                       </Badge>
                     ) : (
-                      <Button size="sm" variant="outline">
+                      <Button 
+                        size="sm" 
+                        variant="outline"
+                        onClick={() => handleLogSet(index)}
+                        disabled={!activeWorkout}
+                      >
                         Log Set
                       </Button>
                     )}
@@ -149,51 +261,67 @@ const Training = () => {
             )}
 
             {/* Exercise Navigation */}
-            <div className="flex gap-3">
-              {currentExercise > 0 && (
-                <Button variant="outline" onClick={() => setCurrentExercise(currentExercise - 1)}>
-                  Previous Exercise
-                </Button>
-              )}
-              {currentExercise < workout.exercises.length - 1 ? (
-                <Button 
-                  className="flex-1 bg-gradient-primary" 
-                  onClick={() => setCurrentExercise(currentExercise + 1)}
-                >
-                  Next Exercise
-                </Button>
-              ) : (
-                <Button className="flex-1 bg-gradient-accent">
-                  Finish Workout
-                </Button>
-              )}
-            </div>
+            {activeWorkout && (
+              <div className="flex gap-3">
+                {currentExercise > 0 && (
+                  <Button variant="outline" onClick={() => setCurrentExercise(currentExercise - 1)}>
+                    Previous Exercise
+                  </Button>
+                )}
+                {currentExercise < workout.exercises.length - 1 ? (
+                  <Button 
+                    className="flex-1 bg-gradient-primary" 
+                    onClick={() => setCurrentExercise(currentExercise + 1)}
+                  >
+                    Next Exercise
+                  </Button>
+                ) : (
+                  <Button 
+                    className="flex-1 bg-gradient-accent"
+                    onClick={handleFinishWorkout}
+                    disabled={sessionLoading}
+                  >
+                    {sessionLoading ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Finishing...
+                      </>
+                    ) : (
+                      'Finish Workout'
+                    )}
+                  </Button>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
+        )}
 
         {/* Workout Progress */}
-        <Card className="shadow-card">
-          <CardContent className="pt-6">
-            <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <span className="text-sm font-medium">Workout Progress</span>
-                <span className="text-sm text-muted-foreground">
-                  {currentExercise + 1}/{workout.exercises.length} exercises
-                </span>
+        {workout && (
+          <Card className="shadow-card">
+            <CardContent className="pt-6">
+              <div className="space-y-3">
+                <div className="flex justify-between items-center">
+                  <span className="text-sm font-medium">Workout Progress</span>
+                  <span className="text-sm text-muted-foreground">
+                    {currentExercise + 1}/{workout.exercises.length} exercises
+                  </span>
+                </div>
+                <div className="flex gap-1">
+                  {workout.exercises.map((_, index) => (
+                    <div
+                      key={index}
+                      className={`h-2 flex-1 rounded-full ${
+                        index <= currentExercise ? 'bg-fitness-primary' : 'bg-muted'
+                      }`}
+                    />
+                  ))}
+                </div>
               </div>
-              <div className="flex gap-1">
-                {workout.exercises.map((_, index) => (
-                  <div
-                    key={index}
-                    className={`h-2 flex-1 rounded-full ${
-                      index <= currentExercise ? 'bg-fitness-primary' : 'bg-muted'
-                    }`}
-                  />
-                ))}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        )}
       </main>
 
       <BottomNav />

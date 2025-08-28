@@ -1,16 +1,24 @@
+import React from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
-import { Dumbbell, Play, Target, TrendingUp, Calendar, Clock } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Progress } from "@/components/ui/progress";
+import { Separator } from "@/components/ui/separator";
 import { BottomNav } from "@/components/BottomNav";
+import { AuthGuard } from "@/components/AuthGuard";
 import { UserMenu } from "@/components/UserMenu";
 import { useAuth } from "@/contexts/AuthContext";
-import { AuthGuard } from "@/components/AuthGuard";
+import { useUserMetrics } from "@/hooks/useUserMetrics";
+import { useWorkoutGeneration } from "@/hooks/useWorkoutGeneration";
+import { useWorkoutProgram } from "@/hooks/useWorkoutProgram";
+import { Dumbbell, Calendar, Target, TrendingUp, Flame, Trophy, Loader2 } from "lucide-react";
+import { Link } from "react-router-dom";
 
 const Dashboard = () => {
   const { user } = useAuth();
+  const { metrics, isLoading: metricsLoading } = useUserMetrics();
+  const { todaysWorkout, isLoading: workoutLoading } = useWorkoutGeneration();
+  const { activeProgram } = useWorkoutProgram();
 
   const dashboardContent = (
     <div className="min-h-screen bg-background">
@@ -24,7 +32,7 @@ const Dashboard = () => {
             </div>
             <div className="flex items-center gap-3">
               <Badge variant="secondary" className="bg-white/20 text-white border-white/30">
-                Week 3, Day 2
+                {activeProgram ? `${activeProgram.name}` : 'No Program'}
               </Badge>
               <UserMenu />
             </div>
@@ -33,105 +41,147 @@ const Dashboard = () => {
       </header>
 
       <main className="container mx-auto p-4 pb-20 space-y-6">
-        {/* Today's Workout Card */}
-        <Card className="shadow-card">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className="flex items-center gap-2">
-                  <Target className="h-5 w-5 text-fitness-primary" />
-                  Today's Workout
-                </CardTitle>
-                <CardDescription>Upper Body - Hypertrophy Focus</CardDescription>
-              </div>
-              <div className="text-right">
-                <div className="text-sm text-muted-foreground">Estimated</div>
-                <div className="flex items-center gap-1 text-sm font-medium">
-                  <Clock className="h-4 w-4" />
-                  45 min
+        {user ? (
+          <>
+            {/* Today's Workout Card */}
+            <Card className="shadow-card">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-xl">Today's Workout</CardTitle>
+                    <CardDescription>
+                      {workoutLoading ? (
+                        <div className="flex items-center gap-2">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Loading...
+                        </div>
+                      ) : todaysWorkout ? (
+                        todaysWorkout.name
+                      ) : activeProgram ? (
+                        `${activeProgram.name} - Rest Day`
+                      ) : (
+                        "No active program"
+                      )}
+                    </CardDescription>
+                  </div>
+                  {metrics && (
+                    <Badge variant="outline" className="bg-fitness-success/10 text-fitness-success border-fitness-success/20">
+                      <Target className="h-3 w-3 mr-1" />
+                      Ready: {metrics.readinessScore}%
+                    </Badge>
+                  )}
                 </div>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <div className="flex justify-between text-sm">
-                <span>Readiness Score</span>
-                <span className="font-medium text-fitness-accent">85%</span>
-              </div>
-              <Progress value={85} className="h-2" />
-            </div>
-            
-            <div className="grid grid-cols-2 gap-4 text-center">
-              <div>
-                <div className="text-2xl font-bold text-fitness-primary">6</div>
-                <div className="text-sm text-muted-foreground">Exercises</div>
-              </div>
-              <div>
-                <div className="text-2xl font-bold text-fitness-accent">18</div>
-                <div className="text-sm text-muted-foreground">Total Sets</div>
-              </div>
-            </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {todaysWorkout ? (
+                  <>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="text-center p-3 bg-muted/50 rounded-lg">
+                        <div className="text-2xl font-bold text-fitness-primary">
+                          {todaysWorkout.exercises.length}
+                        </div>
+                        <div className="text-sm text-muted-foreground">Exercises</div>
+                      </div>
+                      <div className="text-center p-3 bg-muted/50 rounded-lg">
+                        <div className="text-2xl font-bold text-fitness-primary">
+                          {todaysWorkout.exercises.reduce((total, ex) => total + ex.sets, 0)}
+                        </div>
+                        <div className="text-sm text-muted-foreground">Total Sets</div>
+                      </div>
+                    </div>
+                    <Separator />
+                    <Link to="/train">
+                      <Button className="w-full bg-gradient-primary text-white">
+                        Start Workout
+                      </Button>
+                    </Link>
+                  </>
+                ) : (
+                  <div className="text-center py-8 space-y-4">
+                    <p className="text-muted-foreground">
+                      {activeProgram ? "Rest day - let your muscles recover!" : "Set up your workout program to get started"}
+                    </p>
+                    {!activeProgram && (
+                      <Link to="/settings">
+                        <Button className="bg-gradient-primary">
+                          Create Program
+                        </Button>
+                      </Link>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
-            <Link to="/train">
-              <Button className="w-full bg-gradient-primary hover:opacity-90 transition-opacity" size="lg">
-                <Play className="mr-2 h-5 w-5" />
-                Start Workout
-              </Button>
-            </Link>
-          </CardContent>
-        </Card>
+            {/* This Week's Progress */}
+            <Card className="shadow-card">
+              <CardHeader>
+                <CardTitle className="text-lg">This Week's Progress</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {metricsLoading ? (
+                  <div className="flex items-center justify-center py-4">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  </div>
+                ) : metrics ? (
+                  <>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-muted-foreground">Workouts Completed</span>
+                      <span className="text-sm font-medium">
+                        {metrics.weeklyProgress.completedWorkouts}/{metrics.weeklyProgress.targetWorkouts}
+                      </span>
+                    </div>
+                    <Progress 
+                      value={(metrics.weeklyProgress.completedWorkouts / metrics.weeklyProgress.targetWorkouts) * 100} 
+                      className="h-2" 
+                    />
+                    
+                    <Separator />
+                    
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-muted-foreground">Total Sets</span>
+                      <span className="text-sm font-medium">{metrics.weeklyProgress.totalSets}</span>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-center text-muted-foreground py-4">No data available</p>
+                )}
+              </CardContent>
+            </Card>
 
-        {/* Week Progress */}
-        <Card className="shadow-card">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <TrendingUp className="h-5 w-5 text-fitness-accent" />
-              This Week's Progress
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
+            {/* Quick Stats */}
             <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span>Workouts Completed</span>
-                  <span className="font-medium">2/4</span>
-                </div>
-                <Progress value={50} className="h-2" />
-              </div>
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span>Weekly Volume</span>
-                  <span className="font-medium">12/20 sets</span>
-                </div>
-                <Progress value={60} className="h-2" />
-              </div>
+              <Card className="shadow-card">
+                <CardContent className="pt-4">
+                  <div className="flex items-center space-x-2">
+                    <Flame className="h-5 w-5 text-orange-500" />
+                    <div>
+                      <div className="text-2xl font-bold">
+                        {metricsLoading ? '--' : metrics?.workoutStreak || 0}
+                      </div>
+                      <div className="text-xs text-muted-foreground">Day Streak</div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+              
+              <Card className="shadow-card">
+                <CardContent className="pt-4">
+                  <div className="flex items-center space-x-2">
+                    <Trophy className="h-5 w-5 text-yellow-500" />
+                    <div>
+                      <div className="text-2xl font-bold">
+                        {metricsLoading ? '--' : metrics?.monthlyPRs || 0}
+                      </div>
+                      <div className="text-xs text-muted-foreground">PRs This Month</div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
             </div>
-          </CardContent>
-        </Card>
-
-        {/* Quick Stats */}
-        <div className="grid grid-cols-2 gap-4">
-          <Card className="shadow-card">
-            <CardContent className="pt-6">
-              <div className="text-center">
-                <div className="text-2xl font-bold text-fitness-primary">7</div>
-                <div className="text-sm text-muted-foreground">Day Streak</div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="shadow-card">
-            <CardContent className="pt-6">
-              <div className="text-center">
-                <div className="text-2xl font-bold text-fitness-accent">12</div>
-                <div className="text-sm text-muted-foreground">PRs This Month</div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Setup Reminder - Show if not authenticated or missing data */}
-        {!user && (
+          </>
+        ) : (
+          {/* Setup Reminder - Show if not authenticated */}
           <Card className="shadow-card border-fitness-warning/20 bg-fitness-warning/5">
             <CardContent className="pt-6">
               <div className="text-center space-y-3">
