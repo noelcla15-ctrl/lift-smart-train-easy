@@ -2,10 +2,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { ChevronLeft, Timer, Check, Plus, RotateCcw, Loader2 } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Progress } from "@/components/ui/progress";
+import { ChevronLeft, Timer, Check, Plus, RotateCcw, Loader2, ChevronDown, Eye, Target } from "lucide-react";
 import { Link } from "react-router-dom";
 import { BottomNav } from "@/components/BottomNav";
 import { AuthGuard } from "@/components/AuthGuard";
+import { WorkoutSummary } from "@/components/WorkoutSummary";
 import { useState, useEffect } from "react";
 import { useWorkoutGeneration } from "@/hooks/useWorkoutGeneration";
 import { useWorkoutSession } from "@/hooks/useWorkoutSession";
@@ -19,11 +22,13 @@ const Training = () => {
   const [isResting, setIsResting] = useState(false);
   const [restTime, setRestTime] = useState(90);
   const [restTimer, setRestTimer] = useState<NodeJS.Timeout | null>(null);
+  const [showWorkoutSummary, setShowWorkoutSummary] = useState(false);
 
   // Use active workout or today's generated workout
   const workout = activeWorkout || (todaysWorkout ? {
     name: todaysWorkout.name,
     exercises: todaysWorkout.exercises.map(ex => ({
+      id: ex.id,
       name: ex.name,
       sets: Array(ex.sets).fill(null).map((_, i) => ({
         weight: ex.weight || 0,
@@ -36,6 +41,34 @@ const Training = () => {
       exerciseId: ex.exerciseId
     }))
   } : null);
+
+  // Calculate total exercises including warmup and cooldown for progress
+  const getTotalExercises = () => {
+    if (!todaysWorkout) return workout?.exercises.length || 0;
+    return (todaysWorkout.warmup?.length || 0) + 
+           todaysWorkout.exercises.length + 
+           (todaysWorkout.cooldown?.length || 0);
+  };
+
+  // Calculate current section and progress
+  const getCurrentSection = () => {
+    if (!todaysWorkout) return { section: 'main', sectionIndex: currentExercise, total: workout?.exercises.length || 0 };
+    
+    const warmupLength = todaysWorkout.warmup?.length || 0;
+    const mainLength = todaysWorkout.exercises.length;
+    
+    if (currentExercise < warmupLength) {
+      return { section: 'warmup', sectionIndex: currentExercise, total: warmupLength };
+    } else if (currentExercise < warmupLength + mainLength) {
+      return { section: 'main', sectionIndex: currentExercise - warmupLength, total: mainLength };
+    } else {
+      return { section: 'cooldown', sectionIndex: currentExercise - warmupLength - mainLength, total: (todaysWorkout.cooldown?.length || 0) };
+    }
+  };
+
+  const { section, sectionIndex, total } = getCurrentSection();
+  const totalExercises = getTotalExercises();
+  const progressPercentage = totalExercises > 0 ? (currentExercise / totalExercises) * 100 : 0;
 
   const currentEx = workout?.exercises[currentExercise];
 
@@ -147,44 +180,84 @@ const Training = () => {
               <div>
                 <h1 className="font-semibold">{workout?.name || 'Today\'s Workout'}</h1>
                 <p className="text-sm text-muted-foreground">
-                  Exercise {currentExercise + 1} of {workout?.exercises.length || 0}
+                  {section === 'warmup' && 'Warm-up'} 
+                  {section === 'main' && 'Exercise'} 
+                  {section === 'cooldown' && 'Cool-down'} {' '}
+                  {sectionIndex + 1} of {total}
                 </p>
               </div>
             </div>
-            <Badge variant="secondary" className="bg-fitness-primary/10 text-fitness-primary">
-              {isResting ? `Rest: ${restTime}s` : activeWorkout ? 'Working' : 'Ready to Start'}
-            </Badge>
+            <div className="flex items-center gap-2">
+              {activeWorkout && (
+                <div className="text-xs text-muted-foreground">
+                  {Math.round(progressPercentage)}% complete
+                </div>
+              )}
+              <Badge variant="secondary" className="bg-fitness-primary/10 text-fitness-primary">
+                {isResting ? `Rest: ${restTime}s` : activeWorkout ? 'Working' : 'Ready to Start'}
+              </Badge>
+            </div>
           </div>
         </div>
       </header>
 
       <main className="container mx-auto p-4 pb-20 space-y-6">
-        {/* Start Workout Button */}
+        {/* Pre-Workout Summary */}
         {!activeWorkout && todaysWorkout && (
-          <Card className="shadow-card">
-            <CardContent className="pt-6 text-center space-y-4">
-              <div>
-                <h2 className="text-xl font-semibold">{todaysWorkout.name}</h2>
-                <p className="text-muted-foreground">
-                  {todaysWorkout.exercises.length} exercises • ~{todaysWorkout.estimatedDuration} min
-                </p>
+          <div className="space-y-4">
+            <WorkoutSummary workout={todaysWorkout} />
+            <Card className="shadow-card">
+              <CardContent className="pt-6 text-center">
+                <Button 
+                  onClick={handleStartWorkout} 
+                  disabled={sessionLoading}
+                  className="w-full bg-gradient-primary"
+                  size="lg"
+                >
+                  {sessionLoading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Starting Workout...
+                    </>
+                  ) : (
+                    <>
+                      <Target className="h-4 w-4 mr-2" />
+                      Start Workout
+                    </>
+                  )}
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* Active Workout Summary Toggle */}
+        {activeWorkout && (todaysWorkout || workout) && (
+          <Collapsible open={showWorkoutSummary} onOpenChange={setShowWorkoutSummary}>
+            <CollapsibleTrigger asChild>
+              <Card className="shadow-card cursor-pointer hover:bg-muted/50 transition-colors">
+                <CardContent className="pt-4 pb-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Eye className="h-4 w-4 text-muted-foreground" />
+                      <span className="font-medium text-sm">View Full Workout</span>
+                    </div>
+                    <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${showWorkoutSummary ? 'rotate-180' : ''}`} />
+                  </div>
+                </CardContent>
+              </Card>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="mt-4">
+                <WorkoutSummary 
+                  workout={todaysWorkout || workout!} 
+                  currentExerciseIndex={currentExercise}
+                  showCompleted={true}
+                  isCompact={true}
+                />
               </div>
-              <Button 
-                onClick={handleStartWorkout} 
-                disabled={sessionLoading}
-                className="w-full bg-gradient-primary"
-              >
-                {sessionLoading ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Starting...
-                  </>
-                ) : (
-                  'Start Workout'
-                )}
-              </Button>
-            </CardContent>
-          </Card>
+            </CollapsibleContent>
+          </Collapsible>
         )}
 
         {/* Current Exercise */}
@@ -302,26 +375,46 @@ const Training = () => {
         </Card>
         )}
 
-        {/* Workout Progress */}
-        {workout && (
+        {/* Enhanced Workout Progress */}
+        {activeWorkout && (
           <Card className="shadow-card">
             <CardContent className="pt-6">
-              <div className="space-y-3">
+              <div className="space-y-4">
                 <div className="flex justify-between items-center">
-                  <span className="text-sm font-medium">Workout Progress</span>
+                  <span className="text-sm font-medium">Overall Progress</span>
                   <span className="text-sm text-muted-foreground">
-                    {currentExercise + 1}/{workout.exercises.length} exercises
+                    {currentExercise + 1}/{totalExercises} exercises
                   </span>
                 </div>
-                <div className="flex gap-1">
-                  {workout.exercises.map((_, index) => (
-                    <div
-                      key={index}
-                      className={`h-2 flex-1 rounded-full ${
-                        index <= currentExercise ? 'bg-fitness-primary' : 'bg-muted'
-                      }`}
-                    />
-                  ))}
+                <div className="space-y-2">
+                  <Progress value={progressPercentage} className="h-2" />
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>Started</span>
+                    <span className="font-medium">{Math.round(progressPercentage)}% Complete</span>
+                    <span>Finish</span>
+                  </div>
+                </div>
+                
+                {/* Section-specific progress */}
+                <div className="pt-2 border-t">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-xs font-medium capitalize">
+                      Current: {section === 'main' ? 'Main Workout' : section}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {sectionIndex + 1}/{total}
+                    </span>
+                  </div>
+                  <div className="flex gap-1">
+                    {Array.from({ length: total }, (_, index) => (
+                      <div
+                        key={index}
+                        className={`h-1.5 flex-1 rounded-full ${
+                          index <= sectionIndex ? 'bg-fitness-primary' : 'bg-muted'
+                        }`}
+                      />
+                    ))}
+                  </div>
                 </div>
               </div>
             </CardContent>
