@@ -181,7 +181,6 @@ const Dashboard = () => {
             </div>
           </>
         ) : (
-          {/* Setup Reminder - Show if not authenticated */}
           <Card className="shadow-card border-fitness-warning/20 bg-fitness-warning/5">
             <CardContent className="pt-6">
               <div className="text-center space-y-3">
