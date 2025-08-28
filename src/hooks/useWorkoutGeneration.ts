@@ -6,11 +6,31 @@ import { supabase } from '@/integrations/supabase/client';
 
 export interface GeneratedWorkout {
   name: string;
+  warmup?: Array<{
+    id: string;
+    name: string;
+    sets: number;
+    reps: number | string;
+    weight?: number;
+    restTime: number;
+    notes?: string;
+    exerciseId: string;
+  }>;
   exercises: Array<{
     id: string;
     name: string;
     sets: number;
-    reps: number;
+    reps: number | string;
+    weight?: number;
+    restTime: number;
+    notes?: string;
+    exerciseId: string;
+  }>;
+  cooldown?: Array<{
+    id: string;
+    name: string;
+    sets: number;
+    reps: number | string;
     weight?: number;
     restTime: number;
     notes?: string;
@@ -60,7 +80,7 @@ export const useWorkoutGeneration = () => {
       
       // Generate workout parameters
       const params = {
-        trainingExperience: 'intermediate' as const, // Could come from user profile
+        trainingExperience: 'intermediate' as const,
         trainingGoals: activeProgram.training_focus === 'hypertrophy' ? ['muscle_gain'] : ['strength'],
         weeklyAvailability: activeProgram.sessions_per_week,
         availableEquipment: preferences?.available_equipment || ['barbell', 'dumbbell'],
@@ -72,16 +92,36 @@ export const useWorkoutGeneration = () => {
       const program = await generator.generateProgram(params);
       
       // Get today's workout from the generated program
-      const workout = program[0]; // Get the first workout from the generated program
+      const workout = program[0];
       
       const generatedWorkout: GeneratedWorkout = {
         name: workout.name,
+        warmup: workout.warmup?.map(ex => ({
+          id: crypto.randomUUID(),
+          name: ex.exercise_name,
+          sets: ex.sets,
+          reps: typeof ex.reps === 'string' ? parseInt(ex.reps) : ex.reps,
+          weight: ex.weight_kg ? Math.round(ex.weight_kg * 2.20462) : undefined,
+          restTime: ex.rest_seconds,
+          notes: ex.notes || '',
+          exerciseId: ex.exercise_id,
+        })),
         exercises: workout.exercises.map(ex => ({
           id: crypto.randomUUID(),
           name: ex.exercise_name,
           sets: ex.sets,
           reps: typeof ex.reps === 'string' ? parseInt(ex.reps) : ex.reps,
-          weight: ex.weight_kg ? Math.round(ex.weight_kg * 2.20462) : undefined, // Convert kg to lbs
+          weight: ex.weight_kg ? Math.round(ex.weight_kg * 2.20462) : undefined,
+          restTime: ex.rest_seconds,
+          notes: ex.notes || '',
+          exerciseId: ex.exercise_id,
+        })),
+        cooldown: workout.cooldown?.map(ex => ({
+          id: crypto.randomUUID(),
+          name: ex.exercise_name,
+          sets: ex.sets,
+          reps: typeof ex.reps === 'string' ? parseInt(ex.reps) : ex.reps,
+          weight: ex.weight_kg ? Math.round(ex.weight_kg * 2.20462) : undefined,
           restTime: ex.rest_seconds,
           notes: ex.notes || '',
           exerciseId: ex.exercise_id,
@@ -99,9 +139,6 @@ export const useWorkoutGeneration = () => {
   };
 
   const determineWorkoutType = (program: any, recentLogs: any[]) => {
-    // Simple logic to determine what type of workout to do today
-    // Based on program type and what was done recently
-    
     if (program.program_type === 'full_body') {
       return 'full_body';
     }
@@ -109,16 +146,12 @@ export const useWorkoutGeneration = () => {
     if (program.program_type === 'upper_lower') {
       const lastWorkout = recentLogs[0];
       if (!lastWorkout) return 'upper';
-      
-      // Alternate between upper and lower
       return lastWorkout.name.toLowerCase().includes('upper') ? 'lower' : 'upper';
     }
     
     if (program.program_type === 'push_pull_legs') {
       const lastWorkout = recentLogs[0];
       if (!lastWorkout) return 'push';
-      
-      // Cycle through push, pull, legs
       if (lastWorkout.name.toLowerCase().includes('push')) return 'pull';
       if (lastWorkout.name.toLowerCase().includes('pull')) return 'legs';
       return 'push';

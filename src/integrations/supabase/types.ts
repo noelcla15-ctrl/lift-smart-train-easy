@@ -309,35 +309,47 @@ export type Database = {
         Row: {
           auto_progress_enabled: boolean | null
           available_equipment: string[] | null
+          cooldown_duration_minutes: number | null
           created_at: string | null
           disliked_exercises: string[] | null
           id: string
+          include_cooldown: boolean | null
+          include_warmup: boolean | null
           preferred_rest_between_sets: number | null
           preferred_workout_duration: number | null
           updated_at: string | null
           user_id: string
+          warmup_duration_minutes: number | null
         }
         Insert: {
           auto_progress_enabled?: boolean | null
           available_equipment?: string[] | null
+          cooldown_duration_minutes?: number | null
           created_at?: string | null
           disliked_exercises?: string[] | null
           id?: string
+          include_cooldown?: boolean | null
+          include_warmup?: boolean | null
           preferred_rest_between_sets?: number | null
           preferred_workout_duration?: number | null
           updated_at?: string | null
           user_id: string
+          warmup_duration_minutes?: number | null
         }
         Update: {
           auto_progress_enabled?: boolean | null
           available_equipment?: string[] | null
+          cooldown_duration_minutes?: number | null
           created_at?: string | null
           disliked_exercises?: string[] | null
           id?: string
+          include_cooldown?: boolean | null
+          include_warmup?: boolean | null
           preferred_rest_between_sets?: number | null
           preferred_workout_duration?: number | null
           updated_at?: string | null
           user_id?: string
+          warmup_duration_minutes?: number | null
         }
         Relationships: []
       }

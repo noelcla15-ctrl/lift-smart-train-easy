@@ -12,7 +12,31 @@ export interface WorkoutGenerationParams {
 
 export interface GeneratedWorkout {
   name: string;
+  warmup?: Array<{
+    exercise_id: string;
+    exercise_name: string;
+    sets: number;
+    reps: number | string;
+    weight_kg?: number;
+    rest_seconds: number;
+    order_index: number;
+    notes?: string;
+    movement_pattern: string;
+    muscle_groups: string[];
+  }>;
   exercises: Array<{
+    exercise_id: string;
+    exercise_name: string;
+    sets: number;
+    reps: number | string;
+    weight_kg?: number;
+    rest_seconds: number;
+    order_index: number;
+    notes?: string;
+    movement_pattern: string;
+    muscle_groups: string[];
+  }>;
+  cooldown?: Array<{
     exercise_id: string;
     exercise_name: string;
     sets: number;
@@ -68,19 +92,30 @@ export class WorkoutGenerator {
 
     switch (programType) {
       case 'full_body':
-        workouts.push(...this.generateFullBodyProgram(params));
+        workouts.push(...await this.generateFullBodyProgram(params));
         break;
       case 'upper_lower':
-        workouts.push(...this.generateUpperLowerProgram(params));
+        workouts.push(...await this.generateUpperLowerProgram(params));
         break;
       case 'push_pull_legs':
-        workouts.push(...this.generatePushPullLegsProgram(params));
+        workouts.push(...await this.generatePushPullLegsProgram(params));
         break;
       default:
-        workouts.push(...this.generateFullBodyProgram(params));
+        workouts.push(...await this.generateFullBodyProgram(params));
     }
 
     return workouts;
+  }
+
+  private async getUserPreferences(params: WorkoutGenerationParams) {
+    // In a real implementation, this would fetch from the database
+    // For now, using defaults that match the new user_preferences columns
+    return {
+      include_warmup: true,
+      include_cooldown: true,
+      warmup_duration_minutes: 8,
+      cooldown_duration_minutes: 8
+    };
   }
 
   private determineProgramType(params: WorkoutGenerationParams): string {
@@ -90,9 +125,10 @@ export class WorkoutGenerator {
     return 'full_body';
   }
 
-  private generateFullBodyProgram(params: WorkoutGenerationParams): GeneratedWorkout[] {
+  private async generateFullBodyProgram(params: WorkoutGenerationParams): Promise<GeneratedWorkout[]> {
     const workoutTemplate = this.createFullBodyTemplate(params);
     const workouts: GeneratedWorkout[] = [];
+    const preferences = await this.getUserPreferences(params);
 
     for (let i = 0; i < params.weeklyAvailability; i++) {
       const workout = this.populateWorkoutWithExercises(
@@ -100,17 +136,31 @@ export class WorkoutGenerator {
         workoutTemplate,
         params
       );
-      workouts.push(workout);
+      
+      const warmup = preferences.include_warmup ? 
+        await this.generateWarmup(workout.exercises, preferences.warmup_duration_minutes) : undefined;
+      const cooldown = preferences.include_cooldown ? 
+        await this.generateCooldown(workout.exercises, preferences.cooldown_duration_minutes) : undefined;
+      
+      workouts.push({
+        ...workout,
+        warmup,
+        cooldown,
+        estimated_duration: workout.estimated_duration + 
+          (warmup?.length || 0) * 1 + 
+          (cooldown?.length || 0) * 0.5
+      });
     }
 
     return workouts;
   }
 
-  private generateUpperLowerProgram(params: WorkoutGenerationParams): GeneratedWorkout[] {
+  private async generateUpperLowerProgram(params: WorkoutGenerationParams): Promise<GeneratedWorkout[]> {
     const upperTemplate = this.createUpperBodyTemplate(params);
     const lowerTemplate = this.createLowerBodyTemplate(params);
     
     const workouts: GeneratedWorkout[] = [];
+    const preferences = await this.getUserPreferences(params);
     
     // Alternate upper/lower
     for (let i = 0; i < params.weeklyAvailability; i++) {
@@ -119,13 +169,26 @@ export class WorkoutGenerator {
       const name = isUpper ? `Upper Body ${Math.floor(i/2) + 1}` : `Lower Body ${Math.floor(i/2) + 1}`;
       
       const workout = this.populateWorkoutWithExercises(name, template, params);
-      workouts.push(workout);
+      
+      const warmup = preferences.include_warmup ? 
+        await this.generateWarmup(workout.exercises, preferences.warmup_duration_minutes) : undefined;
+      const cooldown = preferences.include_cooldown ? 
+        await this.generateCooldown(workout.exercises, preferences.cooldown_duration_minutes) : undefined;
+      
+      workouts.push({
+        ...workout,
+        warmup,
+        cooldown,
+        estimated_duration: workout.estimated_duration + 
+          (warmup?.length || 0) * 1 + 
+          (cooldown?.length || 0) * 0.5
+      });
     }
 
     return workouts;
   }
 
-  private generatePushPullLegsProgram(params: WorkoutGenerationParams): GeneratedWorkout[] {
+  private async generatePushPullLegsProgram(params: WorkoutGenerationParams): Promise<GeneratedWorkout[]> {
     const pushTemplate = this.createPushTemplate(params);
     const pullTemplate = this.createPullTemplate(params);
     const legsTemplate = this.createLegsTemplate(params);
@@ -133,6 +196,7 @@ export class WorkoutGenerator {
     const templates = [pushTemplate, pullTemplate, legsTemplate];
     const names = ['Push', 'Pull', 'Legs'];
     const workouts: GeneratedWorkout[] = [];
+    const preferences = await this.getUserPreferences(params);
 
     for (let i = 0; i < params.weeklyAvailability; i++) {
       const templateIndex = i % 3;
@@ -140,7 +204,20 @@ export class WorkoutGenerator {
       const name = `${names[templateIndex]} ${cycleNumber}`;
       
       const workout = this.populateWorkoutWithExercises(name, templates[templateIndex], params);
-      workouts.push(workout);
+      
+      const warmup = preferences.include_warmup ? 
+        await this.generateWarmup(workout.exercises, preferences.warmup_duration_minutes) : undefined;
+      const cooldown = preferences.include_cooldown ? 
+        await this.generateCooldown(workout.exercises, preferences.cooldown_duration_minutes) : undefined;
+      
+      workouts.push({
+        ...workout,
+        warmup,
+        cooldown,
+        estimated_duration: workout.estimated_duration + 
+          (warmup?.length || 0) * 1 + 
+          (cooldown?.length || 0) * 0.5
+      });
     }
 
     return workouts;
@@ -423,6 +500,124 @@ export class WorkoutGenerator {
     }
     
     return 'mixed';
+  }
+
+  private async generateWarmup(mainExercises: any[], duration: number) {
+    const targetMuscleGroups = this.extractMuscleGroups(mainExercises);
+    const warmupExercises = this.exercises.filter(ex => ex.category === 'warm_up');
+    
+    const selectedWarmups: any[] = [];
+    const targetCount = Math.min(6, Math.max(3, Math.floor(duration / 1.5))); // 3-6 exercises based on duration
+    
+    // Prioritize exercises that target the main muscle groups
+    for (const muscle of targetMuscleGroups.slice(0, 4)) {
+      const relevantExercises = warmupExercises.filter(ex => 
+        ex.muscle_groups.includes(muscle) && !selectedWarmups.find(s => s.exercise_id === ex.id)
+      );
+      
+      if (relevantExercises.length > 0) {
+        const exercise = relevantExercises[Math.floor(Math.random() * relevantExercises.length)];
+        selectedWarmups.push({
+          exercise_id: exercise.id,
+          exercise_name: exercise.name,
+          sets: 1,
+          reps: exercise.name.includes('Hold') || exercise.name.includes('Stretch') ? 30 : 10,
+          rest_seconds: 15,
+          order_index: selectedWarmups.length,
+          notes: exercise.instructions || '',
+          movement_pattern: exercise.movement_pattern,
+          muscle_groups: exercise.muscle_groups
+        });
+      }
+    }
+    
+    // Fill remaining slots with general mobility exercises
+    while (selectedWarmups.length < targetCount) {
+      const remaining = warmupExercises.filter(ex => 
+        !selectedWarmups.find(s => s.exercise_id === ex.id) &&
+        (ex.movement_pattern === 'general_movement' || ex.movement_pattern === 'spinal_mobility')
+      );
+      
+      if (remaining.length === 0) break;
+      
+      const exercise = remaining[Math.floor(Math.random() * remaining.length)];
+      selectedWarmups.push({
+        exercise_id: exercise.id,
+        exercise_name: exercise.name,
+        sets: 1,
+        reps: exercise.name.includes('seconds') ? 30 : 10,
+        rest_seconds: 15,
+        order_index: selectedWarmups.length,
+        notes: exercise.instructions || '',
+        movement_pattern: exercise.movement_pattern,
+        muscle_groups: exercise.muscle_groups
+      });
+    }
+    
+    return selectedWarmups.slice(0, targetCount);
+  }
+
+  private async generateCooldown(mainExercises: any[], duration: number) {
+    const targetMuscleGroups = this.extractMuscleGroups(mainExercises);
+    const cooldownExercises = this.exercises.filter(ex => ex.category === 'cool_down');
+    
+    const selectedCooldowns: any[] = [];
+    const targetCount = Math.min(6, Math.max(3, Math.floor(duration / 1.5))); // 3-6 exercises based on duration
+    
+    // Prioritize stretches for the main muscle groups worked
+    for (const muscle of targetMuscleGroups.slice(0, 4)) {
+      const relevantExercises = cooldownExercises.filter(ex => 
+        ex.muscle_groups.includes(muscle) && !selectedCooldowns.find(s => s.exercise_id === ex.id)
+      );
+      
+      if (relevantExercises.length > 0) {
+        const exercise = relevantExercises[Math.floor(Math.random() * relevantExercises.length)];
+        selectedCooldowns.push({
+          exercise_id: exercise.id,
+          exercise_name: exercise.name,
+          sets: 1,
+          reps: 30, // Hold time in seconds for stretches
+          rest_seconds: 10,
+          order_index: selectedCooldowns.length,
+          notes: exercise.instructions || '',
+          movement_pattern: exercise.movement_pattern,
+          muscle_groups: exercise.muscle_groups
+        });
+      }
+    }
+    
+    // Fill remaining slots with general stretches and breathing
+    while (selectedCooldowns.length < targetCount) {
+      const remaining = cooldownExercises.filter(ex => 
+        !selectedCooldowns.find(s => s.exercise_id === ex.id) &&
+        (ex.movement_pattern === 'breathing' || ex.movement_pattern === 'back_stretch' || ex.movement_pattern === 'spinal_stretch')
+      );
+      
+      if (remaining.length === 0) break;
+      
+      const exercise = remaining[Math.floor(Math.random() * remaining.length)];
+      selectedCooldowns.push({
+        exercise_id: exercise.id,
+        exercise_name: exercise.name,
+        sets: 1,
+        reps: exercise.name.includes('Breathing') ? 300 : 30, // 5 minutes for breathing, 30 seconds for stretches
+        rest_seconds: 10,
+        order_index: selectedCooldowns.length,
+        notes: exercise.instructions || '',
+        movement_pattern: exercise.movement_pattern,
+        muscle_groups: exercise.muscle_groups
+      });
+    }
+    
+    return selectedCooldowns.slice(0, targetCount);
+  }
+
+  private extractMuscleGroups(exercises: any[]): string[] {
+    const muscleGroups = new Set<string>();
+    exercises.forEach(ex => {
+      ex.muscle_groups.forEach((mg: string) => muscleGroups.add(mg));
+    });
+    return Array.from(muscleGroups);
   }
 
   async findExerciseAlternative(exerciseId: string, params: WorkoutGenerationParams) {
