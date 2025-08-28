@@ -7,16 +7,24 @@ import { Settings as SettingsIcon, User, Dumbbell, Bell, Shield } from 'lucide-r
 import { AuthGuard } from '@/components/AuthGuard';
 import { BottomNav } from '@/components/BottomNav';
 import { WorkoutProgramSelector } from '@/components/WorkoutProgramSelector';
+import { ProgramModificationModal } from '@/components/ProgramModificationModal';
 import { useWorkoutProgram } from '@/hooks/useWorkoutProgram';
 import { Badge } from '@/components/ui/badge';
 
 const Settings = () => {
   const [activeTab, setActiveTab] = useState('profile');
   const [showProgramGenerator, setShowProgramGenerator] = useState(false);
-  const { activeProgram, userPreferences, loading } = useWorkoutProgram();
+  const [showProgramModification, setShowProgramModification] = useState(false);
+  const { activeProgram, userPreferences, loading, fetchActiveProgram } = useWorkoutProgram();
 
   const handleProgramCreated = () => {
     setShowProgramGenerator(false);
+    fetchActiveProgram();
+  };
+
+  const handleProgramUpdated = () => {
+    setShowProgramModification(false);
+    fetchActiveProgram();
   };
 
   const settingsContent = (
@@ -119,7 +127,11 @@ const Settings = () => {
                         >
                           Generate New Program
                         </Button>
-                        <Button variant="outline" className="flex-1">
+                        <Button 
+                          variant="outline" 
+                          className="flex-1"
+                          onClick={() => setShowProgramModification(true)}
+                        >
                           Modify Current Program
                         </Button>
                       </div>
@@ -231,6 +243,14 @@ const Settings = () => {
             </div>
           </div>
         )}
+
+        {/* Program Modification Modal */}
+        <ProgramModificationModal
+          program={activeProgram}
+          isOpen={showProgramModification}
+          onClose={() => setShowProgramModification(false)}
+          onProgramUpdated={handleProgramUpdated}
+        />
       </main>
 
       <BottomNav />

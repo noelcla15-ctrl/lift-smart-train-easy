@@ -284,7 +284,12 @@ export class WorkoutGenerator {
     params: WorkoutGenerationParams,
     alreadySelected: any[]
   ) {
-    const availableExercises = this.exercises.filter(exercise => {
+    console.log(`Selecting exercise for pattern: ${pattern}`);
+    console.log(`Available equipment: ${params.availableEquipment}`);
+    console.log(`Disliked exercises: ${params.dislikedExercises}`);
+
+    // First try with strict filtering
+    let availableExercises = this.exercises.filter(exercise => {
       // Filter by movement pattern
       if (exercise.movement_pattern !== pattern) return false;
       
@@ -307,12 +312,86 @@ export class WorkoutGenerator {
       return true;
     });
 
+    // If no strict matches, try with relaxed equipment filtering (allow bodyweight fallbacks)
+    if (availableExercises.length === 0) {
+      console.log(`No strict matches for ${pattern}, trying bodyweight alternatives...`);
+      availableExercises = this.exercises.filter(exercise => {
+        if (exercise.movement_pattern !== pattern) return false;
+        if (alreadySelected.some(selected => selected.exercise_id === exercise.id)) return false;
+        if (params.dislikedExercises.includes(exercise.id)) return false;
+        // Allow bodyweight exercises as fallback
+        if (exercise.equipment !== 'bodyweight' && 
+            exercise.equipment && 
+            !params.availableEquipment.includes(exercise.equipment)) return false;
+        return true;
+      });
+    }
+
+    // If still no matches, try similar movement patterns
+    if (availableExercises.length === 0) {
+      console.log(`No matches for ${pattern}, trying similar patterns...`);
+      const similarPatterns = this.getSimilarPatterns(pattern);
+      
+      for (const similarPattern of similarPatterns) {
+        availableExercises = this.exercises.filter(exercise => {
+          if (exercise.movement_pattern !== similarPattern) return false;
+          if (alreadySelected.some(selected => selected.exercise_id === exercise.id)) return false;
+          if (params.dislikedExercises.includes(exercise.id)) return false;
+          // Prefer bodyweight exercises in fallback
+          if (exercise.equipment !== 'bodyweight' && 
+              exercise.equipment && 
+              !params.availableEquipment.includes(exercise.equipment)) return false;
+          return true;
+        });
+        
+        if (availableExercises.length > 0) break;
+      }
+    }
+
+    console.log(`Found ${availableExercises.length} candidates for pattern ${pattern}`);
+    
+    if (availableExercises.length === 0) {
+      console.log(`No exercises found for pattern ${pattern}, trying final fallback...`);
+      // Last resort: any unused exercise with available equipment
+      availableExercises = this.exercises.filter(exercise => {
+        if (alreadySelected.some(selected => selected.exercise_id === exercise.id)) return false;
+        if (params.dislikedExercises.includes(exercise.id)) return false;
+        // Must have compatible equipment or be bodyweight
+        if (exercise.equipment && 
+            exercise.equipment !== 'bodyweight' && 
+            !params.availableEquipment.includes(exercise.equipment)) return false;
+        return true;
+      });
+    }
+
+    if (availableExercises.length === 0) {
+      console.warn(`No suitable exercises found for pattern ${pattern}`);
+      return null;
+    }
+
     // Prioritize compound movements
     const compoundExercises = availableExercises.filter(ex => ex.is_compound);
     const targetExercises = compoundExercises.length > 0 ? compoundExercises : availableExercises;
 
     // Return random exercise from available options
     return targetExercises[Math.floor(Math.random() * targetExercises.length)];
+  }
+
+  private getSimilarPatterns(pattern: string): string[] {
+    const patternMap: Record<string, string[]> = {
+      'push_vertical': ['push_horizontal', 'isolation'],
+      'push_horizontal': ['push_vertical', 'isolation'],
+      'pull_vertical': ['pull_horizontal', 'isolation'],
+      'pull_horizontal': ['pull_vertical', 'isolation'],
+      'squat': ['lunge', 'hinge'],
+      'hinge': ['squat', 'lunge'],
+      'lunge': ['squat', 'hinge'],
+      'isolation': ['carry', 'rotation'],
+      'carry': ['isolation'],
+      'rotation': ['isolation']
+    };
+    
+    return patternMap[pattern] || ['isolation'];
   }
 
   private calculateRestTime(priority: number, focus: string): number {

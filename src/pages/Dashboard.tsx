@@ -1,4 +1,4 @@
-import React from "react";
+import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -11,14 +11,18 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useUserMetrics } from "@/hooks/useUserMetrics";
 import { useWorkoutGeneration } from "@/hooks/useWorkoutGeneration";
 import { useWorkoutProgram } from "@/hooks/useWorkoutProgram";
+import { useWorkoutSession } from "@/hooks/useWorkoutSession";
+import { WorkoutDetailModal } from "@/components/WorkoutDetailModal";
 import { Dumbbell, Calendar, Target, TrendingUp, Flame, Trophy, Loader2 } from "lucide-react";
 import { Link } from "react-router-dom";
 
 const Dashboard = () => {
+  const [showWorkoutDetail, setShowWorkoutDetail] = useState(false);
   const { user } = useAuth();
   const { metrics, isLoading: metricsLoading } = useUserMetrics();
   const { todaysWorkout, isLoading: workoutLoading } = useWorkoutGeneration();
   const { activeProgram } = useWorkoutProgram();
+  const { startWorkout } = useWorkoutSession();
 
   const dashboardContent = (
     <div className="min-h-screen bg-background">
@@ -75,6 +79,24 @@ const Dashboard = () => {
               <CardContent className="space-y-4">
                 {todaysWorkout ? (
                   <>
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-lg font-semibold text-fitness-primary">
+                        Today's Workout
+                      </h3>
+                      <div className="flex gap-2">
+                        <Badge variant="secondary" className="bg-fitness-secondary/10 text-fitness-secondary">
+                          Ready
+                        </Badge>
+                        <Button 
+                          variant="ghost" 
+                          size="sm"
+                          onClick={() => setShowWorkoutDetail(true)}
+                          className="text-xs"
+                        >
+                          View Details
+                        </Button>
+                      </div>
+                    </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="text-center p-3 bg-muted/50 rounded-lg">
                         <div className="text-2xl font-bold text-fitness-primary">
@@ -201,6 +223,13 @@ const Dashboard = () => {
       </main>
 
       <BottomNav />
+
+      {/* Workout Detail Modal */}
+      <WorkoutDetailModal
+        workout={todaysWorkout}
+        isOpen={showWorkoutDetail}
+        onClose={() => setShowWorkoutDetail(false)}
+      />
     </div>
   );
 
