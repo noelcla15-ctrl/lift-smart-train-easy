@@ -2,9 +2,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+
 import { Progress } from "@/components/ui/progress";
-import { ChevronLeft, Timer, Check, Plus, RotateCcw, Loader2, ChevronDown, Eye, Target } from "lucide-react";
+import { ChevronLeft, Timer, Check, Plus, RotateCcw, Loader2, Target } from "lucide-react";
 import { Link } from "react-router-dom";
 import { BottomNav } from "@/components/BottomNav";
 import { AuthGuard } from "@/components/AuthGuard";
@@ -23,7 +23,7 @@ const Training = () => {
   const [isResting, setIsResting] = useState(false);
   const [restTime, setRestTime] = useState(90);
   const restTimerRef = useRef<number | null>(null);
-  const [showWorkoutSummary, setShowWorkoutSummary] = useState(false);
+  
 
   // Resolve the workout source once
   const workout = useMemo(() => {
@@ -193,29 +193,6 @@ const Training = () => {
           </Card>
         )}
 
-        {/* Active Workout Summary Toggle */}
-        {activeWorkout && (todaysWorkout || workout) && (
-          <Collapsible open={showWorkoutSummary} onOpenChange={setShowWorkoutSummary}>
-            <CollapsibleTrigger asChild>
-              <Card className="shadow-card cursor-pointer hover:bg-muted/50 transition-colors">
-                <CardContent className="pt-4 pb-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <Eye className="h-4 w-4 text-muted-foreground" />
-                      <span className="font-medium text-sm">View Full Workout</span>
-                    </div>
-                    <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${showWorkoutSummary ? "rotate-180" : ""}`} />
-                  </div>
-                </CardContent>
-              </Card>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className="mt-4">
-                <WorkoutSummary workout={todaysWorkout || workout!} currentExerciseIndex={currentExercise} showCompleted={true} isCompact={true} />
-              </div>
-            </CollapsibleContent>
-          </Collapsible>
-        )}
 
         {/* Current Exercise */}
         {currentEx && (

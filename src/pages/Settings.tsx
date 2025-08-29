@@ -10,6 +10,10 @@ import { WorkoutProgramSelector } from '@/components/WorkoutProgramSelector';
 import { ProgramModificationModal } from '@/components/ProgramModificationModal';
 import { useWorkoutProgram } from '@/hooks/useWorkoutProgram';
 import { Badge } from '@/components/ui/badge';
+import { ProfileForm } from '@/components/forms/ProfileForm';
+import { PreferencesForm } from '@/components/forms/PreferencesForm';
+import { NotificationForm } from '@/components/forms/NotificationForm';
+import { AccountForm } from '@/components/forms/AccountForm';
 
 const Settings = () => {
   const [activeTab, setActiveTab] = useState('profile');
@@ -53,28 +57,7 @@ const Settings = () => {
 
           {/* Profile Tab */}
           <TabsContent value="profile" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <User className="h-5 w-5" />
-                  Profile Information
-                </CardTitle>
-                <CardDescription>
-                  Manage your personal information and fitness profile
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="text-center text-muted-foreground py-8">
-                  Profile management coming soon. This will include:
-                  <ul className="mt-4 space-y-2 text-sm text-left max-w-md mx-auto">
-                    <li>• Personal information (name, email, avatar)</li>
-                    <li>• Fitness level and experience</li>
-                    <li>• Training goals and preferences</li>
-                    <li>• Body measurements and progress photos</li>
-                  </ul>
-                </div>
-              </CardContent>
-            </Card>
+            <ProfileForm />
           </TabsContent>
 
           {/* Workout Tab */}
@@ -156,71 +139,17 @@ const Settings = () => {
             </Card>
 
             {/* Equipment and Preferences */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Equipment & Preferences</CardTitle>
-                <CardDescription>
-                  Configure your available equipment and workout preferences
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="text-center text-muted-foreground py-4">
-                  Equipment preferences will be configured during program generation
-                </div>
-              </CardContent>
-            </Card>
+            <PreferencesForm />
           </TabsContent>
 
           {/* Notifications Tab */}
           <TabsContent value="notifications" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Bell className="h-5 w-5" />
-                  Notifications
-                </CardTitle>
-                <CardDescription>
-                  Configure your notification preferences
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="text-center text-muted-foreground py-8">
-                  Notification settings coming soon. This will include:
-                  <ul className="mt-4 space-y-2 text-sm text-left max-w-md mx-auto">
-                    <li>• Workout reminders</li>
-                    <li>• Progress notifications</li>
-                    <li>• Achievement alerts</li>
-                    <li>• Weekly summary emails</li>
-                  </ul>
-                </div>
-              </CardContent>
-            </Card>
+            <NotificationForm />
           </TabsContent>
 
           {/* Account Tab */}
           <TabsContent value="account" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Shield className="h-5 w-5" />
-                  Account Settings
-                </CardTitle>
-                <CardDescription>
-                  Manage your account security and privacy
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="text-center text-muted-foreground py-8">
-                  Account management coming soon. This will include:
-                  <ul className="mt-4 space-y-2 text-sm text-left max-w-md mx-auto">
-                    <li>• Password management</li>
-                    <li>• Two-factor authentication</li>
-                    <li>• Privacy settings</li>
-                    <li>• Data export and deletion</li>
-                  </ul>
-                </div>
-              </CardContent>
-            </Card>
+            <AccountForm />
           </TabsContent>
         </Tabs>
 

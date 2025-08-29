@@ -2,8 +2,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Flame, Target, Waves, Clock, Dumbbell, Check } from "lucide-react";
-import { GeneratedWorkout } from "@/hooks/useWorkoutGeneration";
-import { WorkoutExercise } from "@/hooks/useWorkoutSession";
+import { GeneratedWorkout } from "@/types/workout";
+import { WorkoutExercise } from "@/types/workout";
+import { formatReps, formatWeight, formatTime } from "@/utils/formatters";
 
 interface WorkoutSummaryProps {
   workout: GeneratedWorkout | {
@@ -87,21 +88,6 @@ export const WorkoutSummary = ({
     });
   }
 
-  const formatReps = (reps: number | string) => {
-    return typeof reps === 'string' ? reps : reps.toString();
-  };
-
-  const formatWeight = (weight?: number) => {
-    if (!weight || weight === 0) return 'Bodyweight';
-    return `${weight} lbs`;
-  };
-
-  const formatTime = (seconds: number) => {
-    if (seconds < 60) return `${seconds}s`;
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = seconds % 60;
-    return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
-  };
 
   const isExerciseCompleted = (globalIndex: number) => {
     if (!showCompleted) return false;
