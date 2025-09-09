@@ -1,168 +1,87 @@
-import { useState, useEffect } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
-import { useWorkoutProgram } from './useWorkoutProgram';
-import { WorkoutGenerator } from '@/utils/workoutGenerator';
-import { supabase } from '@/integrations/supabase/client';
+import { useEffect, useState } from "react";
+import { useWorkoutProgram } from "./useWorkoutProgram";
+// Adjust path if your file lives elsewhere
+import { WorkoutGenerator } from "@/lib/WorkoutGenerator";
 
-export interface GeneratedWorkout {
+type UISet = {
+  id: string;
   name: string;
-  warmup?: Array<{
-    id: string;
-    name: string;
-    sets: number;
-    reps: number | string;
-    weight?: number;
-    restTime: number;
-    notes?: string;
-    exerciseId: string;
-  }>;
-  exercises: Array<{
-    id: string;
-    name: string;
-    sets: number;
-    reps: number | string;
-    weight?: number;
-    restTime: number;
-    notes?: string;
-    exerciseId: string;
-  }>;
-  cooldown?: Array<{
-    id: string;
-    name: string;
-    sets: number;
-    reps: number | string;
-    weight?: number;
-    restTime: number;
-    notes?: string;
-    exerciseId: string;
-  }>;
-  estimatedDuration: number;
-  difficulty: string;
-}
+  sets: number;
+  reps: number | string;
+  restTime: number;
+  notes?: string;
+  movementPattern: string;
+  muscleGroups: string[];
+  exerciseId: string;
+};
 
-export const useWorkoutGeneration = () => {
-  const { user } = useAuth();
-  const { activeProgram } = useWorkoutProgram();
-  const [todaysWorkout, setTodaysWorkout] = useState<GeneratedWorkout | null>(null);
+type UIWorkout = {
+  name: string;
+  estimatedDuration: number;
+  sessionType: string;
+  warmup?: UISet[];
+  exercises: UISet[];
+  cooldown?: UISet[];
+};
+
+export function useWorkoutGeneration() {
+  const { activeProgram, userPreferences } = useWorkoutProgram() as any;
+  const [todaysWorkout, setTodaysWorkout] = useState<UIWorkout | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    if (user && activeProgram) {
-      generateTodaysWorkout();
-    }
-  }, [user, activeProgram]);
+    (async () => {
+      if (!activeProgram || !userPreferences) return;
+      setIsLoading(true);
+      try {
+        const gen = new WorkoutGenerator();
 
-  const generateTodaysWorkout = async () => {
-    if (!user || !activeProgram) return;
+        const availableEquipment = Object.entries(userPreferences.equipment || {})
+          .filter(([, v]) => Boolean(v))
+          .map(([k]) => k);
 
-    setIsLoading(true);
-    try {
-      // Get user preferences
-      const { data: preferences } = await supabase
-        .from('user_preferences')
-        .select('*')
-        .eq('user_id', user.id)
-        .single();
+        const params = {
+          trainingExperience: "beginner", // replace if you store this
+          trainingGoals: [],
+          weeklyAvailability: Number(activeProgram.sessions_per_week || 3),
+          availableEquipment,
+          dislikedExercises: [], // replace if you store this
+          preferredDuration: Number(userPreferences.typicalSessionMin || 45),
+          trainingFocus: String(activeProgram.training_focus || "general_fitness"),
+        };
 
-      // Get recent workout logs to determine what to do today
-      const { data: recentLogs } = await supabase
-        .from('workout_logs')
-        .select('*')
-        .eq('user_id', user.id)
-        .gte('completed_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
-        .order('completed_at', { ascending: false });
+        const plan = await gen.generateProgram(params);
+        const idx = new Date().getDay() % Math.max(1, plan.length);
+        const w = plan[idx];
 
-      const generator = new WorkoutGenerator();
-      await generator.initialize();
+        const mapSet = (x: any): UISet => ({
+          id: x.exercise_id,
+          name: x.exercise_name,
+          sets: x.sets,
+          reps: x.reps,
+          restTime: x.rest_seconds,
+          notes: x.notes,
+          movementPattern: x.movement_pattern,
+          muscleGroups: x.muscle_groups,
+          exerciseId: x.exercise_id,
+        });
 
-      // Determine workout type based on program and recent activity
-      const workoutType = determineWorkoutType(activeProgram, recentLogs || []);
-      
-      // Generate workout parameters
-      const params = {
-        trainingExperience: 'intermediate' as const,
-        trainingGoals: activeProgram.training_focus === 'hypertrophy' ? ['muscle_gain'] : ['strength'],
-        weeklyAvailability: activeProgram.sessions_per_week,
-        availableEquipment: preferences?.available_equipment || ['barbell', 'dumbbell'],
-        dislikedExercises: preferences?.disliked_exercises || [],
-        preferredDuration: preferences?.preferred_workout_duration || 60,
-        trainingFocus: activeProgram.training_focus as 'hypertrophy' | 'strength' | 'endurance' | 'general_fitness',
-      };
+        setTodaysWorkout({
+          name: w.name,
+          estimatedDuration: w.estimated_duration,
+          sessionType: w.session_type,
+          warmup: w.warmup?.map(mapSet),
+          exercises: w.exercises.map(mapSet),
+          cooldown: w.cooldown?.map(mapSet),
+        });
+      } catch (e) {
+        console.error("generateProgram failed", e);
+        setTodaysWorkout(null);
+      } finally {
+        setIsLoading(false);
+      }
+    })();
+  }, [activeProgram, userPreferences]);
 
-      const program = await generator.generateProgram(params);
-      
-      // Get today's workout from the generated program
-      const workout = program[0];
-      
-      const generatedWorkout: GeneratedWorkout = {
-        name: workout.name,
-        warmup: workout.warmup?.map(ex => ({
-          id: crypto.randomUUID(),
-          name: ex.exercise_name,
-          sets: ex.sets,
-          reps: typeof ex.reps === 'string' ? parseInt(ex.reps) : ex.reps,
-          weight: ex.weight_kg ? Math.round(ex.weight_kg * 2.20462) : undefined,
-          restTime: ex.rest_seconds,
-          notes: ex.notes || '',
-          exerciseId: ex.exercise_id,
-        })),
-        exercises: workout.exercises.map(ex => ({
-          id: crypto.randomUUID(),
-          name: ex.exercise_name,
-          sets: ex.sets,
-          reps: typeof ex.reps === 'string' ? parseInt(ex.reps) : ex.reps,
-          weight: ex.weight_kg ? Math.round(ex.weight_kg * 2.20462) : undefined,
-          restTime: ex.rest_seconds,
-          notes: ex.notes || '',
-          exerciseId: ex.exercise_id,
-        })),
-        cooldown: workout.cooldown?.map(ex => ({
-          id: crypto.randomUUID(),
-          name: ex.exercise_name,
-          sets: ex.sets,
-          reps: typeof ex.reps === 'string' ? parseInt(ex.reps) : ex.reps,
-          weight: ex.weight_kg ? Math.round(ex.weight_kg * 2.20462) : undefined,
-          restTime: ex.rest_seconds,
-          notes: ex.notes || '',
-          exerciseId: ex.exercise_id,
-        })),
-        estimatedDuration: workout.estimated_duration,
-        difficulty: activeProgram.training_focus,
-      };
-
-      setTodaysWorkout(generatedWorkout);
-    } catch (error) {
-      console.error('Error generating workout:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const determineWorkoutType = (program: any, recentLogs: any[]) => {
-    if (program.program_type === 'full_body') {
-      return 'full_body';
-    }
-    
-    if (program.program_type === 'upper_lower') {
-      const lastWorkout = recentLogs[0];
-      if (!lastWorkout) return 'upper';
-      return lastWorkout.name.toLowerCase().includes('upper') ? 'lower' : 'upper';
-    }
-    
-    if (program.program_type === 'push_pull_legs') {
-      const lastWorkout = recentLogs[0];
-      if (!lastWorkout) return 'push';
-      if (lastWorkout.name.toLowerCase().includes('push')) return 'pull';
-      if (lastWorkout.name.toLowerCase().includes('pull')) return 'legs';
-      return 'push';
-    }
-    
-    return 'full_body';
-  };
-
-  return {
-    todaysWorkout,
-    isLoading,
-    generateTodaysWorkout,
-  };
-};
+  return { todaysWorkout, isLoading };
+}

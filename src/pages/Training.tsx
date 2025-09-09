@@ -1,10 +1,9 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
-
 import { Progress } from "@/components/ui/progress";
-import { ChevronLeft, Timer, Check, Plus, RotateCcw, Loader2, Target } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { ChevronLeft, Timer, Check, Plus, RotateCcw, Loader2, Target, Eye, ChevronDown } from "lucide-react";
 import { Link } from "react-router-dom";
 import { BottomNav } from "@/components/BottomNav";
 import { AuthGuard } from "@/components/AuthGuard";
@@ -22,8 +21,8 @@ const Training = () => {
   const [currentExercise, setCurrentExercise] = useState(0);
   const [isResting, setIsResting] = useState(false);
   const [restTime, setRestTime] = useState(90);
+  const [showWorkoutSummary, setShowWorkoutSummary] = useState(true);
   const restTimerRef = useRef<number | null>(null);
-  
 
   // Resolve the workout source once
   const workout = useMemo(() => {
@@ -193,6 +192,34 @@ const Training = () => {
           </Card>
         )}
 
+        {/* Full Workout Summary (always available) */}
+        {(todaysWorkout || workout) && (
+          <Collapsible open={showWorkoutSummary} onOpenChange={setShowWorkoutSummary}>
+            <CollapsibleTrigger asChild>
+              <Card className="shadow-card cursor-pointer hover:bg-muted/50 transition-colors">
+                <CardContent className="pt-4 pb-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Eye className="h-4 w-4 text-muted-foreground" />
+                      <span className="font-medium text-sm">View Full Workout</span>
+                    </div>
+                    <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${showWorkoutSummary ? "rotate-180" : ""}`} />
+                  </div>
+                </CardContent>
+              </Card>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="mt-4">
+                <WorkoutSummary
+                  workout={todaysWorkout || workout!}
+                  currentExerciseIndex={currentExercise}
+                  showCompleted={true}
+                  isCompact={true}
+                />
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+        )}
 
         {/* Current Exercise */}
         {currentEx && (
@@ -315,7 +342,6 @@ const Training = () => {
                   </div>
                 </div>
 
-                {/* Section-specific progress simplified to main workout */}
                 <div className="pt-2 border-t">
                   <div className="flex justify-between items-center mb-2">
                     <span className="text-xs font-medium capitalize">Current: Main Workout</span>
