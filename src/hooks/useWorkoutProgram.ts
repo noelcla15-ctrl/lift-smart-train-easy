@@ -9,6 +9,17 @@ export type Preferences = {
   typicalSessionMin: number;
   equipment: Record<string, boolean>;
   injuries: string;
+  available_equipment?: string[];
+  disliked_exercises?: string[];
+};
+
+export type WorkoutProgram = {
+  id?: string;
+  name: string;
+  program_type: string;
+  training_focus: string;
+  duration_weeks: number;
+  sessions_per_week: number;
 };
 
 export type ActiveProgram = {
@@ -98,9 +109,43 @@ export function useWorkoutProgram() {
       typicalSessionMin: row.typical_session_min,
       equipment: row.equipment ?? {},
       injuries: row.injuries ?? "",
+      available_equipment: prefs.available_equipment,
+      disliked_exercises: prefs.disliked_exercises,
     });
     return row;
   }, [user?.id]);
+
+  const createProgram = useCallback(async (program: WorkoutProgram) => {
+    if (!user?.id) throw new Error("Not signed in");
+    
+    // Set all existing programs to inactive
+    await supabase
+      .from("workout_programs")
+      .update({ is_active: false })
+      .eq("user_id", user.id);
+
+    // Create new program
+    const { data, error } = await supabase
+      .from("workout_programs")
+      .insert({
+        user_id: user.id,
+        name: program.name,
+        program_type: program.program_type,
+        training_focus: program.training_focus,
+        duration_weeks: program.duration_weeks,
+        sessions_per_week: program.sessions_per_week,
+        is_active: true,
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    
+    // Refresh active program
+    await fetchActiveProgram();
+    
+    return data;
+  }, [user?.id, fetchActiveProgram]);
 
   useEffect(() => {
     fetchActiveProgram();
@@ -113,5 +158,6 @@ export function useWorkoutProgram() {
     loading: programLoading || prefsLoading,
     fetchActiveProgram,
     updatePreferences,
+    createProgram,
   };
 }
