@@ -1,14 +1,14 @@
-import { useState, useEffect } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Separator } from '@/components/ui/separator';
-import { Save, X } from 'lucide-react';
-import { WorkoutProgram, useWorkoutProgram } from '@/hooks/useWorkoutProgram';
-import { toast } from 'sonner';
+import { useState, useEffect } from "react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import { Save, X } from "lucide-react";
+import { WorkoutProgram, useWorkoutProgram } from "@/hooks/useWorkoutProgram";
+import { toast } from "sonner";
 
 interface ProgramModificationModalProps {
   program: WorkoutProgram | null;
@@ -17,59 +17,67 @@ interface ProgramModificationModalProps {
   onProgramUpdated: () => void;
 }
 
-export const ProgramModificationModal = ({ 
-  program, 
-  isOpen, 
-  onClose, 
-  onProgramUpdated 
+export const ProgramModificationModal = ({
+  program,
+  isOpen,
+  onClose,
+  onProgramUpdated,
 }: ProgramModificationModalProps) => {
+  // Guards to avoid rendering when closed or no program
+  if (!isOpen) return null;
+  if (!program) return null;
+
+  // Safe locals to avoid calling string methods on undefined
+  const p = program as any;
+  const name = String(p?.name ?? "");
+  const type = String(p?.program_type ?? "");
+  const focus = String(p?.training_focus ?? "general_fitness");
+  const durationWeeks = Number(p?.duration_weeks ?? 8);
+  const sessionsPerWeek = Number(p?.sessions_per_week ?? 3);
+
   const { createProgram } = useWorkoutProgram();
+
   const [formData, setFormData] = useState({
-    name: '',
-    program_type: '',
-    training_focus: '',
-    duration_weeks: 12,
-    sessions_per_week: 3,
+    name,
+    program_type: type,
+    training_focus: focus,
+    duration_weeks: durationWeeks,
+    sessions_per_week: sessionsPerWeek,
   });
   const [isUpdating, setIsUpdating] = useState(false);
 
   useEffect(() => {
     if (program) {
+      const p2 = program as any;
       setFormData({
-        name: program.name,
-        program_type: program.program_type,
-        training_focus: program.training_focus,
-        duration_weeks: program.duration_weeks,
-        sessions_per_week: program.sessions_per_week,
+        name: String(p2?.name ?? ""),
+        program_type: String(p2?.program_type ?? ""),
+        training_focus: String(p2?.training_focus ?? "general_fitness"),
+        duration_weeks: Number(p2?.duration_weeks ?? 8),
+        sessions_per_week: Number(p2?.sessions_per_week ?? 3),
       });
     }
   }, [program]);
 
-  const handleInputChange = (field: string, value: string | number) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: value
-    }));
-  };
+  const handleInputChange = (
+    field: keyof typeof formData,
+    value: string | number
+  ) => setFormData((prev) => ({ ...prev, [field]: value }));
 
   const handleSave = async () => {
-    if (!program) return;
-
     setIsUpdating(true);
     try {
       await createProgram(formData);
-      toast.success('Program updated successfully!');
+      toast.success("Program updated successfully!");
       onProgramUpdated();
       onClose();
     } catch (error) {
-      console.error('Error updating program:', error);
-      toast.error('Failed to update program');
+      console.error("Error updating program:", error);
+      toast.error("Failed to update program");
     } finally {
       setIsUpdating(false);
     }
   };
-
-  if (!program) return null;
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -91,19 +99,25 @@ export const ProgramModificationModal = ({
             </CardHeader>
             <CardContent className="space-y-2">
               <div className="text-sm">
-                <span className="font-medium">Name:</span> {program.name}
+                <span className="font-medium">Name:</span> {name}
               </div>
               <div className="text-sm">
-                <span className="font-medium">Type:</span> {program.program_type.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                <span className="font-medium">Type:</span>{" "}
+                {String(type)
+                  .replace(/_/g, " ")
+                  .replace(/\b\w/g, (l) => l.toUpperCase())}
               </div>
               <div className="text-sm">
-                <span className="font-medium">Focus:</span> {program.training_focus.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                <span className="font-medium">Focus:</span>{" "}
+                {String(focus)
+                  .replace(/_/g, " ")
+                  .replace(/\b\w/g, (l) => l.toUpperCase())}
               </div>
               <div className="text-sm">
-                <span className="font-medium">Duration:</span> {program.duration_weeks} weeks
+                <span className="font-medium">Duration:</span> {durationWeeks} weeks
               </div>
               <div className="text-sm">
-                <span className="font-medium">Frequency:</span> {program.sessions_per_week} sessions per week
+                <span className="font-medium">Frequency:</span> {sessionsPerWeek} sessions per week
               </div>
             </CardContent>
           </Card>
@@ -122,7 +136,7 @@ export const ProgramModificationModal = ({
                 <Input
                   id="name"
                   value={formData.name}
-                  onChange={(e) => handleInputChange('name', e.target.value)}
+                  onChange={(e) => handleInputChange("name", e.target.value)}
                   placeholder="Enter program name"
                 />
               </div>
@@ -132,7 +146,7 @@ export const ProgramModificationModal = ({
                 <Label htmlFor="program_type">Program Type</Label>
                 <Select
                   value={formData.program_type}
-                  onValueChange={(value) => handleInputChange('program_type', value)}
+                  onValueChange={(value) => handleInputChange("program_type", value)}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select program type" />
@@ -150,7 +164,7 @@ export const ProgramModificationModal = ({
                 <Label htmlFor="training_focus">Training Focus</Label>
                 <Select
                   value={formData.training_focus}
-                  onValueChange={(value) => handleInputChange('training_focus', value)}
+                  onValueChange={(value) => handleInputChange("training_focus", value)}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select training focus" />
@@ -171,7 +185,7 @@ export const ProgramModificationModal = ({
                   id="duration"
                   type="number"
                   value={formData.duration_weeks}
-                  onChange={(e) => handleInputChange('duration_weeks', parseInt(e.target.value))}
+                  onChange={(e) => handleInputChange("duration_weeks", parseInt(e.target.value || "0", 10))}
                   min={4}
                   max={52}
                   step={1}
@@ -182,8 +196,8 @@ export const ProgramModificationModal = ({
               <div className="space-y-2">
                 <Label htmlFor="sessions">Sessions Per Week</Label>
                 <Select
-                  value={formData.sessions_per_week.toString()}
-                  onValueChange={(value) => handleInputChange('sessions_per_week', parseInt(value))}
+                  value={String(formData.sessions_per_week)}
+                  onValueChange={(value) => handleInputChange("sessions_per_week", parseInt(value, 10))}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select sessions per week" />
@@ -205,19 +219,14 @@ export const ProgramModificationModal = ({
             <Button variant="outline" onClick={onClose} className="flex-1">
               Cancel
             </Button>
-            <Button 
-              onClick={handleSave} 
-              disabled={isUpdating}
-              className="flex-1"
-            >
+            <Button onClick={handleSave} disabled={isUpdating} className="flex-1">
               <Save className="h-4 w-4 mr-2" />
-              {isUpdating ? 'Updating...' : 'Save Changes'}
+              {isUpdating ? "Updating..." : "Save Changes"}
             </Button>
           </div>
 
           <div className="text-sm text-muted-foreground bg-muted/50 p-3 rounded-lg">
-            <strong>Note:</strong> Saving changes will create a new program with your modifications and set it as active. 
-            Your current program will be deactivated but not deleted.
+            <strong>Note:</strong> Saving changes will create a new program with your modifications and set it as active. Your current program will be deactivated but not deleted.
           </div>
         </div>
       </DialogContent>
