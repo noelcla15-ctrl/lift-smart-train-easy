@@ -1,77 +1,75 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-// Adjust this import if your client lives elsewhere, e.g. "@/supabaseClient"
 import { supabase } from "@/integrations/supabase/client";
+
+export type WorkoutProgram = {
+  id: string;
+  user_id: string;
+  name: string;
+  program_type: "full_body" | "upper_lower" | "push_pull_legs";
+  training_focus: "strength" | "hypertrophy" | "endurance" | "general_fitness";
+  duration_weeks: number;
+  sessions_per_week: number;
+  is_active: boolean;
+  created_at?: string;
+};
 
 export type Preferences = {
   goal: "strength" | "hypertrophy" | "endurance" | "fat_loss";
   daysPerWeek: number;
   typicalSessionMin: number;
-  equipment: Record<string, boolean>;
+  equipment: Record<string, boolean>; // { dumbbells: true, barbell: false, ... }
   injuries: string;
-};
-
-export type ActiveProgram = {
-  id: string;
-  name: string;
-  sessions_per_week: number;
-  duration_weeks: number;
-  training_focus: string | null;
-  is_active: boolean;
 };
 
 export function useWorkoutProgram() {
   const { user } = useAuth() as any;
 
-  const [activeProgram, setActiveProgram] = useState<ActiveProgram | null>(null);
+  const [activeProgram, setActiveProgram] = useState<WorkoutProgram | null>(null);
   const [userPreferences, setUserPreferences] = useState<Preferences | null>(null);
-  const [programLoading, setProgramLoading] = useState<boolean>(true);
-  const [prefsLoading, setPrefsLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState<boolean>(true);
 
   const fetchActiveProgram = useCallback(async () => {
-    if (!user?.id) { setActiveProgram(null); setProgramLoading(false); return; }
-    setProgramLoading(true);
+    if (!user?.id) { setActiveProgram(null); return; }
     const { data, error } = await supabase
       .from("workout_programs")
-      .select("id, name, sessions_per_week, duration_weeks, training_focus, is_active")
+      .select("*")
       .eq("user_id", user.id)
       .eq("is_active", true)
-      .limit(1);
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
     if (error) {
-      console.error("fetchActiveProgram error", error);
+      console.error("fetchActiveProgram", error);
       setActiveProgram(null);
     } else {
-      setActiveProgram((data as any[])?.[0] ?? null);
+      setActiveProgram(data as any);
     }
-    setProgramLoading(false);
   }, [user?.id]);
 
   const fetchPreferences = useCallback(async () => {
-    if (!user?.id) { setUserPreferences(null); setPrefsLoading(false); return; }
-    setPrefsLoading(true);
+    if (!user?.id) { setUserPreferences(null); return; }
     const { data, error } = await supabase
       .from("user_preferences")
-      .select("user_id, goal, days_per_week, typical_session_min, equipment, injuries")
+      .select("goal, days_per_week, typical_session_min, equipment, injuries")
       .eq("user_id", user.id)
-      .limit(1);
+      .maybeSingle();
+
     if (error) {
-      console.error("fetchPreferences error", error);
+      console.error("fetchPreferences", error);
       setUserPreferences(null);
-    } else {
-      const row = (data as any[])?.[0];
-      if (row) {
-        setUserPreferences({
-          goal: row.goal,
-          daysPerWeek: row.days_per_week,
-          typicalSessionMin: row.typical_session_min,
-          equipment: row.equipment ?? {},
-          injuries: row.injuries ?? "",
-        });
-      } else {
-        setUserPreferences(null);
-      }
+      return;
     }
-    setPrefsLoading(false);
+    if (!data) { setUserPreferences(null); return; }
+
+    setUserPreferences({
+      goal: (data.goal || "hypertrophy") as Preferences["goal"],
+      daysPerWeek: Number(data.days_per_week ?? 3),
+      typicalSessionMin: Number(data.typical_session_min ?? 60),
+      equipment: data.equipment ?? {},
+      injuries: data.injuries ?? "",
+    });
   }, [user?.id]);
 
   const updatePreferences = useCallback(async (prefs: Preferences) => {
@@ -85,33 +83,68 @@ export function useWorkoutProgram() {
       injuries: prefs.injuries,
       updated_at: new Date().toISOString(),
     };
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from("user_preferences")
-      .upsert(payload, { onConflict: "user_id" })
-      .select("user_id, goal, days_per_week, typical_session_min, equipment, injuries")
-      .limit(1);
+      .upsert(payload, { onConflict: "user_id" });
     if (error) throw error;
-    const row = (data as any[])?.[0];
-    setUserPreferences({
-      goal: row.goal,
-      daysPerWeek: row.days_per_week,
-      typicalSessionMin: row.typical_session_min,
-      equipment: row.equipment ?? {},
-      injuries: row.injuries ?? "",
-    });
-    return row;
+    await fetchPreferences();
+  }, [user?.id, fetchPreferences]);
+
+  // Create program and set it active. Deactivate existing ones.
+  const createProgram = useCallback(async (p: {
+    name: string;
+    program_type: WorkoutProgram["program_type"];
+    training_focus: WorkoutProgram["training_focus"];
+    duration_weeks: number;
+    sessions_per_week: number;
+  }) => {
+    if (!user?.id) throw new Error("Not signed in");
+
+    // deactivate existing
+    const { error: upErr } = await supabase
+      .from("workout_programs")
+      .update({ is_active: false })
+      .eq("user_id", user.id)
+      .eq("is_active", true);
+    if (upErr) throw upErr;
+
+    // insert new
+    const insertPayload = {
+      user_id: user.id,
+      name: p.name,
+      program_type: p.program_type,
+      training_focus: p.training_focus,
+      duration_weeks: p.duration_weeks,
+      sessions_per_week: p.sessions_per_week,
+      is_active: true,
+    };
+    const { data, error } = await supabase
+      .from("workout_programs")
+      .insert(insertPayload)
+      .select("*")
+      .single();
+    if (error) throw error;
+
+    setActiveProgram(data as any);
+    return data as WorkoutProgram;
   }, [user?.id]);
 
   useEffect(() => {
-    fetchActiveProgram();
-    fetchPreferences();
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      await Promise.all([fetchActiveProgram(), fetchPreferences()]);
+      if (!cancelled) setLoading(false);
+    })();
+    return () => { cancelled = true; };
   }, [fetchActiveProgram, fetchPreferences]);
 
   return {
     activeProgram,
     userPreferences,
-    loading: programLoading || prefsLoading,
+    loading,
     fetchActiveProgram,
     updatePreferences,
+    createProgram,
   };
 }
