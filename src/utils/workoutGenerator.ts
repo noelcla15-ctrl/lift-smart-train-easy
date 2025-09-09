@@ -1,659 +1,466 @@
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from "@/integrations/supabase/client";
 
 export interface WorkoutGenerationParams {
-  trainingExperience: 'beginner' | 'intermediate' | 'advanced';
-  trainingGoals: string[];
-  weeklyAvailability: number;
-  availableEquipment: string[];
-  dislikedExercises: string[];
-  preferredDuration: number;
-  trainingFocus: 'strength' | 'hypertrophy' | 'endurance' | 'general_fitness';
+  trainingExperience: "beginner" | "intermediate" | "advanced";
+  trainingGoals: string[]; // optional extra goals
+  weeklyAvailability: number; // 1-7
+  availableEquipment: string[]; // e.g., ["bodyweight","dumbbells","barbell"]
+  dislikedExercises: string[]; // exercise IDs
+  preferredDuration: number; // minutes
+  trainingFocus: "strength" | "hypertrophy" | "endurance" | "general_fitness";
 }
 
 export interface GeneratedWorkout {
   name: string;
-  warmup?: Array<{
-    exercise_id: string;
-    exercise_name: string;
-    sets: number;
-    reps: number | string;
-    weight_kg?: number;
-    rest_seconds: number;
-    order_index: number;
-    notes?: string;
-    movement_pattern: string;
-    muscle_groups: string[];
-  }>;
-  exercises: Array<{
-    exercise_id: string;
-    exercise_name: string;
-    sets: number;
-    reps: number | string;
-    weight_kg?: number;
-    rest_seconds: number;
-    order_index: number;
-    notes?: string;
-    movement_pattern: string;
-    muscle_groups: string[];
-  }>;
-  cooldown?: Array<{
-    exercise_id: string;
-    exercise_name: string;
-    sets: number;
-    reps: number | string;
-    weight_kg?: number;
-    rest_seconds: number;
-    order_index: number;
-    notes?: string;
-    movement_pattern: string;
-    muscle_groups: string[];
-  }>;
-  estimated_duration: number;
+  warmup?: Array<Slot>;
+  exercises: Array<Slot>;
+  cooldown?: Array<Slot>;
+  estimated_duration: number; // minutes
   session_type: string;
 }
 
-// Movement patterns for balanced programming
-const MOVEMENT_PATTERNS = {
-  squat: ['squat', 'goblet_squat', 'front_squat', 'split_squat'],
-  hinge: ['deadlift', 'rdl', 'good_morning', 'hip_thrust'],
-  push_vertical: ['overhead_press', 'push_press', 'handstand_pushup'],
-  push_horizontal: ['push_up', 'bench_press', 'chest_press'],
-  pull_vertical: ['pull_up', 'lat_pulldown', 'chin_up'],
-  pull_horizontal: ['row', 'reverse_fly', 'face_pull'],
-  lunge: ['lunge', 'reverse_lunge', 'walking_lunge', 'curtsy_lunge'],
-  carry: ['farmer_walk', 'suitcase_carry', 'overhead_carry'],
-  rotation: ['wood_chop', 'russian_twist', 'pallof_press'],
-  isolation: ['bicep_curl', 'tricep_extension', 'lateral_raise']
+export type Slot = {
+  exercise_id: string;
+  exercise_name: string;
+  sets: number;
+  reps: number | string;
+  weight_kg?: number;
+  rest_seconds: number;
+  order_index: number;
+  notes?: string;
+  movement_pattern: string;
+  muscle_groups: string[];
+  priority?: 1 | 2; // 1 = primary compound, 2 = secondary/accessory
 };
+
+// ------------------ utils ------------------
+function weekSeed() {
+  const d = new Date();
+  const onejan = new Date(d.getFullYear(), 0, 1);
+  const week = Math.floor(((d as any) - (onejan as any)) / 604800000);
+  return `${d.getFullYear()}-w${week}`;
+}
+function xmur3(str: string) {
+  let h = 1779033703 ^ str.length;
+  for (let i = 0; i < str.length; i++) {
+    h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  return () => {
+    h = Math.imul(h ^ (h >>> 16), 2246822507);
+    h = Math.imul(h ^ (h >>> 13), 3266489909);
+    h ^= h >>> 16;
+    return h >>> 0;
+  };
+}
+function mulberry32(a: number) {
+  return () => {
+    let t = (a += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function seededPick<T>(arr: T[], rand: () => number) {
+  if (!arr.length) return undefined as any;
+  return arr[Math.floor(rand() * arr.length)];
+}
+
+// Movement pattern caps used for weekly fatigue management
+const PRIMARY_PATTERNS = [
+  "squat",
+  "hinge",
+  "push_vertical",
+  "push_horizontal",
+  "pull_vertical",
+  "pull_horizontal",
+  "lunge",
+];
+
+function weeklyTargets(focus: string, exp: string, availability: number) {
+  // rough per-pattern weekly "hard sets" targets
+  const base: Record<string, { primary: number; accessory: number }> = {
+    strength: { primary: 10, accessory: 6 },
+    hypertrophy: { primary: 12, accessory: 10 },
+    endurance: { primary: 8, accessory: 6 },
+    general_fitness: { primary: 10, accessory: 8 },
+  };
+  const expMod: Record<string, number> = { beginner: -2, intermediate: 0, advanced: +2 };
+  const p = base[focus] || base.general_fitness;
+  const mod = expMod[exp] || 0;
+  // fewer days -> slightly higher per-day load
+  const availMod = availability <= 3 ? +1 : availability >= 5 ? -1 : 0;
+  const primary = Math.max(4, p.primary + mod + availMod);
+  const accessory = Math.max(2, p.accessory + mod);
+  const caps: Record<string, number> = {};
+  for (const pat of PRIMARY_PATTERNS) caps[pat] = primary;
+  caps["isolation"] = accessory * 2; // pooled accessory bucket
+  return caps;
+}
+
+function repsScheme(focus: string, exp: string) {
+  const base: any = {
+    beginner: { compound: { sets: 3, reps: "8-10" }, isolation: { sets: 2, reps: "12-15" } },
+    intermediate: { compound: { sets: 4, reps: "6-8" }, isolation: { sets: 3, reps: "10-12" } },
+    advanced: { compound: { sets: 5, reps: "4-6" }, isolation: { sets: 3, reps: "8-12" } },
+  };
+  const reps: any = {
+    strength: { compound: "3-5", isolation: "6-8" },
+    hypertrophy: { compound: "6-12", isolation: "10-15" },
+    endurance: { compound: "12-20", isolation: "15-25" },
+    general_fitness: { compound: "8-12", isolation: "10-15" },
+  };
+  const b = base[exp];
+  const r = reps[focus] || reps.general_fitness;
+  return {
+    compoundSets: b.compound.sets,
+    compoundReps: r.compound,
+    isoSets: b.isolation.sets,
+    isoReps: r.isolation,
+  };
+}
+
+function restSeconds(priority: 1 | 2, focus: string) {
+  const base: any = {
+    strength: { 1: 180, 2: 120 },
+    hypertrophy: { 1: 90, 2: 60 },
+    endurance: { 1: 60, 2: 45 },
+    general_fitness: { 1: 90, 2: 60 },
+  };
+  return (base[focus] || base.general_fitness)[priority];
+}
+
+function estimateMinutes(sets: number, rest: number) {
+  // ~45s effort per set + rest
+  return Math.ceil((sets * (45 + rest)) / 60);
+}
 
 export class WorkoutGenerator {
   private exercises: any[] = [];
 
   async initialize() {
-    const { data, error } = await supabase
-      .from('exercises')
-      .select('*');
-
-    if (error) {
-      console.error('Error fetching exercises:', error);
-      return;
-    }
-
+    const { data, error } = await supabase.from("exercises").select("*");
+    if (error) throw error;
     this.exercises = data || [];
   }
 
   async generateProgram(params: WorkoutGenerationParams): Promise<GeneratedWorkout[]> {
-    if (this.exercises.length === 0) {
-      await this.initialize();
-    }
+    if (!this.exercises.length) await this.initialize();
 
-    const programType = this.determineProgramType(params);
-    const workouts: GeneratedWorkout[] = [];
+    const type = this.determineProgramType(params);
+    const caps = weeklyTargets(params.trainingFocus, params.trainingExperience, params.weeklyAvailability);
+    const days = Math.max(1, Math.min(7, params.weeklyAvailability));
 
-    switch (programType) {
-      case 'full_body':
-        workouts.push(...await this.generateFullBodyProgram(params));
-        break;
-      case 'upper_lower':
-        workouts.push(...await this.generateUpperLowerProgram(params));
-        break;
-      case 'push_pull_legs':
-        workouts.push(...await this.generatePushPullLegsProgram(params));
-        break;
-      default:
-        workouts.push(...await this.generateFullBodyProgram(params));
-    }
-
-    return workouts;
-  }
-
-  private async getUserPreferences(params: WorkoutGenerationParams) {
-    // In a real implementation, this would fetch from the database
-    // For now, using defaults that match the new user_preferences columns
-    return {
-      include_warmup: true,
-      include_cooldown: true,
-      warmup_duration_minutes: 8,
-      cooldown_duration_minutes: 8
-    };
-  }
-
-  private determineProgramType(params: WorkoutGenerationParams): string {
-    if (params.weeklyAvailability <= 3) return 'full_body';
-    if (params.weeklyAvailability === 4) return 'upper_lower';
-    if (params.weeklyAvailability >= 5) return 'push_pull_legs';
-    return 'full_body';
-  }
-
-  private async generateFullBodyProgram(params: WorkoutGenerationParams): Promise<GeneratedWorkout[]> {
-    const workoutTemplate = this.createFullBodyTemplate(params);
-    const workouts: GeneratedWorkout[] = [];
-    const preferences = await this.getUserPreferences(params);
-
-    for (let i = 0; i < params.weeklyAvailability; i++) {
-      const workout = this.populateWorkoutWithExercises(
-        `Full Body Workout ${i + 1}`,
-        workoutTemplate,
-        params
-      );
-      
-      const warmup = preferences.include_warmup ? 
-        await this.generateWarmup(workout.exercises, preferences.warmup_duration_minutes) : undefined;
-      const cooldown = preferences.include_cooldown ? 
-        await this.generateCooldown(workout.exercises, preferences.cooldown_duration_minutes) : undefined;
-      
-      workouts.push({
-        ...workout,
-        warmup,
-        cooldown,
-        estimated_duration: workout.estimated_duration + 
-          (warmup?.length || 0) * 1 + 
-          (cooldown?.length || 0) * 0.5
-      });
-    }
-
-    return workouts;
-  }
-
-  private async generateUpperLowerProgram(params: WorkoutGenerationParams): Promise<GeneratedWorkout[]> {
-    const upperTemplate = this.createUpperBodyTemplate(params);
-    const lowerTemplate = this.createLowerBodyTemplate(params);
-    
-    const workouts: GeneratedWorkout[] = [];
-    const preferences = await this.getUserPreferences(params);
-    
-    // Alternate upper/lower
-    for (let i = 0; i < params.weeklyAvailability; i++) {
-      const isUpper = i % 2 === 0;
-      const template = isUpper ? upperTemplate : lowerTemplate;
-      const name = isUpper ? `Upper Body ${Math.floor(i/2) + 1}` : `Lower Body ${Math.floor(i/2) + 1}`;
-      
-      const workout = this.populateWorkoutWithExercises(name, template, params);
-      
-      const warmup = preferences.include_warmup ? 
-        await this.generateWarmup(workout.exercises, preferences.warmup_duration_minutes) : undefined;
-      const cooldown = preferences.include_cooldown ? 
-        await this.generateCooldown(workout.exercises, preferences.cooldown_duration_minutes) : undefined;
-      
-      workouts.push({
-        ...workout,
-        warmup,
-        cooldown,
-        estimated_duration: workout.estimated_duration + 
-          (warmup?.length || 0) * 1 + 
-          (cooldown?.length || 0) * 0.5
-      });
-    }
-
-    return workouts;
-  }
-
-  private async generatePushPullLegsProgram(params: WorkoutGenerationParams): Promise<GeneratedWorkout[]> {
-    const pushTemplate = this.createPushTemplate(params);
-    const pullTemplate = this.createPullTemplate(params);
-    const legsTemplate = this.createLegsTemplate(params);
-    
-    const templates = [pushTemplate, pullTemplate, legsTemplate];
-    const names = ['Push', 'Pull', 'Legs'];
-    const workouts: GeneratedWorkout[] = [];
-    const preferences = await this.getUserPreferences(params);
-
-    for (let i = 0; i < params.weeklyAvailability; i++) {
-      const templateIndex = i % 3;
-      const cycleNumber = Math.floor(i / 3) + 1;
-      const name = `${names[templateIndex]} ${cycleNumber}`;
-      
-      const workout = this.populateWorkoutWithExercises(name, templates[templateIndex], params);
-      
-      const warmup = preferences.include_warmup ? 
-        await this.generateWarmup(workout.exercises, preferences.warmup_duration_minutes) : undefined;
-      const cooldown = preferences.include_cooldown ? 
-        await this.generateCooldown(workout.exercises, preferences.cooldown_duration_minutes) : undefined;
-      
-      workouts.push({
-        ...workout,
-        warmup,
-        cooldown,
-        estimated_duration: workout.estimated_duration + 
-          (warmup?.length || 0) * 1 + 
-          (cooldown?.length || 0) * 0.5
-      });
-    }
-
-    return workouts;
-  }
-
-  private createFullBodyTemplate(params: WorkoutGenerationParams) {
-    const sets = this.getSetsRepsForGoal(params.trainingFocus, params.trainingExperience);
-    
-    return [
-      { pattern: 'squat', sets: sets.compound.sets, reps: sets.compound.reps, priority: 1 },
-      { pattern: 'hinge', sets: sets.compound.sets, reps: sets.compound.reps, priority: 1 },
-      { pattern: 'push_horizontal', sets: sets.compound.sets, reps: sets.compound.reps, priority: 1 },
-      { pattern: 'pull_horizontal', sets: sets.isolation.sets, reps: sets.isolation.reps, priority: 2 },
-      { pattern: 'push_vertical', sets: sets.isolation.sets, reps: sets.isolation.reps, priority: 2 },
-      { pattern: 'pull_vertical', sets: sets.isolation.sets, reps: sets.isolation.reps, priority: 2 }
-    ];
-  }
-
-  private createUpperBodyTemplate(params: WorkoutGenerationParams) {
-    const sets = this.getSetsRepsForGoal(params.trainingFocus, params.trainingExperience);
-    
-    return [
-      { pattern: 'push_horizontal', sets: sets.compound.sets, reps: sets.compound.reps, priority: 1 },
-      { pattern: 'pull_horizontal', sets: sets.compound.sets, reps: sets.compound.reps, priority: 1 },
-      { pattern: 'push_vertical', sets: sets.compound.sets, reps: sets.compound.reps, priority: 1 },
-      { pattern: 'pull_vertical', sets: sets.compound.sets, reps: sets.compound.reps, priority: 1 },
-      { pattern: 'isolation', sets: sets.isolation.sets, reps: sets.isolation.reps, priority: 2 },
-      { pattern: 'isolation', sets: sets.isolation.sets, reps: sets.isolation.reps, priority: 2 }
-    ];
-  }
-
-  private createLowerBodyTemplate(params: WorkoutGenerationParams) {
-    const sets = this.getSetsRepsForGoal(params.trainingFocus, params.trainingExperience);
-    
-    return [
-      { pattern: 'squat', sets: sets.compound.sets, reps: sets.compound.reps, priority: 1 },
-      { pattern: 'hinge', sets: sets.compound.sets, reps: sets.compound.reps, priority: 1 },
-      { pattern: 'lunge', sets: sets.compound.sets, reps: sets.compound.reps, priority: 1 },
-      { pattern: 'isolation', sets: sets.isolation.sets, reps: sets.isolation.reps, priority: 2 },
-      { pattern: 'isolation', sets: sets.isolation.sets, reps: sets.isolation.reps, priority: 2 }
-    ];
-  }
-
-  private createPushTemplate(params: WorkoutGenerationParams) {
-    const sets = this.getSetsRepsForGoal(params.trainingFocus, params.trainingExperience);
-    
-    return [
-      { pattern: 'push_horizontal', sets: sets.compound.sets, reps: sets.compound.reps, priority: 1 },
-      { pattern: 'push_vertical', sets: sets.compound.sets, reps: sets.compound.reps, priority: 1 },
-      { pattern: 'isolation', sets: sets.isolation.sets, reps: sets.isolation.reps, priority: 2 },
-      { pattern: 'isolation', sets: sets.isolation.sets, reps: sets.isolation.reps, priority: 2 }
-    ];
-  }
-
-  private createPullTemplate(params: WorkoutGenerationParams) {
-    const sets = this.getSetsRepsForGoal(params.trainingFocus, params.trainingExperience);
-    
-    return [
-      { pattern: 'pull_vertical', sets: sets.compound.sets, reps: sets.compound.reps, priority: 1 },
-      { pattern: 'pull_horizontal', sets: sets.compound.sets, reps: sets.compound.reps, priority: 1 },
-      { pattern: 'isolation', sets: sets.isolation.sets, reps: sets.isolation.reps, priority: 2 },
-      { pattern: 'isolation', sets: sets.isolation.sets, reps: sets.isolation.reps, priority: 2 }
-    ];
-  }
-
-  private createLegsTemplate(params: WorkoutGenerationParams) {
-    const sets = this.getSetsRepsForGoal(params.trainingFocus, params.trainingExperience);
-    
-    return [
-      { pattern: 'squat', sets: sets.compound.sets, reps: sets.compound.reps, priority: 1 },
-      { pattern: 'hinge', sets: sets.compound.sets, reps: sets.compound.reps, priority: 1 },
-      { pattern: 'lunge', sets: sets.compound.sets, reps: sets.compound.reps, priority: 1 },
-      { pattern: 'isolation', sets: sets.isolation.sets, reps: sets.isolation.reps, priority: 2 }
-    ];
-  }
-
-  private getSetsRepsForGoal(focus: string, experience: string) {
-    const baseVolume = {
-      beginner: { compound: { sets: 3, reps: '8-10' }, isolation: { sets: 2, reps: '12-15' } },
-      intermediate: { compound: { sets: 4, reps: '6-8' }, isolation: { sets: 3, reps: '10-12' } },
-      advanced: { compound: { sets: 5, reps: '5-6' }, isolation: { sets: 3, reps: '8-12' } }
-    };
-
-    const focusModifiers = {
-      strength: { compoundReps: '3-5', isolationReps: '6-8' },
-      hypertrophy: { compoundReps: '6-12', isolationReps: '8-15' },
-      endurance: { compoundReps: '12-20', isolationReps: '15-25' },
-      general_fitness: { compoundReps: '8-12', isolationReps: '10-15' }
-    };
-
-    const base = baseVolume[experience as keyof typeof baseVolume];
-    const modifier = focusModifiers[focus as keyof typeof focusModifiers];
-
-    return {
-      compound: { sets: base.compound.sets, reps: modifier.compoundReps },
-      isolation: { sets: base.isolation.sets, reps: modifier.isolationReps }
-    };
-  }
-
-  private populateWorkoutWithExercises(
-    name: string,
-    template: any[],
-    params: WorkoutGenerationParams
-  ): GeneratedWorkout {
-    const selectedExercises: any[] = [];
-    let estimatedDuration = 10; // warm-up time
-
-    template.forEach((slot, index) => {
-      const exercise = this.selectExerciseForPattern(slot.pattern, params, selectedExercises);
-      
-      if (exercise) {
-        const restTime = this.calculateRestTime(slot.priority, params.trainingFocus);
-        
-        selectedExercises.push({
-          exercise_id: exercise.id,
-          exercise_name: exercise.name,
-          sets: slot.sets,
-          reps: slot.reps,
-          rest_seconds: restTime,
-          order_index: index,
-          movement_pattern: exercise.movement_pattern,
-          muscle_groups: exercise.muscle_groups,
-          notes: exercise.instructions?.substring(0, 100)
-        });
-
-        // Estimate time: sets * (45 seconds execution + rest time)
-        estimatedDuration += slot.sets * (45 + restTime) / 60;
-      }
+    const seedStr = JSON.stringify({
+      focus: params.trainingFocus,
+      exp: params.trainingExperience,
+      avail: params.weeklyAvailability,
+      equip: params.availableEquipment,
+      dislike: params.dislikedExercises,
+      week: weekSeed(),
     });
+    const seed = xmur3(seedStr)();
+    const rand = mulberry32(seed);
 
-    return {
-      name,
-      exercises: selectedExercises,
-      estimated_duration: Math.round(estimatedDuration),
-      session_type: this.determineSessionType(template)
-    };
-  }
+    const workouts: GeneratedWorkout[] = [];
 
-  private selectExerciseForPattern(
-    pattern: string,
-    params: WorkoutGenerationParams,
-    alreadySelected: any[]
-  ) {
-    console.log(`Selecting exercise for pattern: ${pattern}`);
-    console.log(`Available equipment: ${params.availableEquipment}`);
-    console.log(`Disliked exercises: ${params.dislikedExercises}`);
+    for (let day = 0; day < days; day++) {
+      const template = this.dayTemplate(type, params, day);
+      const { exercises, sessionType } = this.populate(template, params, caps, rand);
 
-    // First try with strict filtering
-    let availableExercises = this.exercises.filter(exercise => {
-      // Filter by movement pattern
-      if (exercise.movement_pattern !== pattern) return false;
-      
-      // Filter by experience level
-      const experienceLevels = ['beginner'];
-      if (params.trainingExperience === 'intermediate') experienceLevels.push('intermediate');
-      if (params.trainingExperience === 'advanced') experienceLevels.push('advanced');
-      
-      if (!experienceLevels.includes(exercise.experience_level)) return false;
-      
-      // Filter by available equipment
-      if (exercise.equipment && !params.availableEquipment.includes(exercise.equipment)) return false;
-      
-      // Exclude disliked exercises
-      if (params.dislikedExercises.includes(exercise.id)) return false;
-      
-      // Don't repeat exercises in same workout
-      if (alreadySelected.some(selected => selected.exercise_id === exercise.id)) return false;
-      
-      return true;
-    });
+      // time-box to preferred duration
+      const trimmed = this.timeBox(exercises, params.preferredDuration, params.trainingFocus);
+      const duration = trimmed.reduce((min, s) => min + estimateMinutes(s.sets, s.rest_seconds), 0);
 
-    // If no strict matches, try with relaxed equipment filtering (allow bodyweight fallbacks)
-    if (availableExercises.length === 0) {
-      console.log(`No strict matches for ${pattern}, trying bodyweight alternatives...`);
-      availableExercises = this.exercises.filter(exercise => {
-        if (exercise.movement_pattern !== pattern) return false;
-        if (alreadySelected.some(selected => selected.exercise_id === exercise.id)) return false;
-        if (params.dislikedExercises.includes(exercise.id)) return false;
-        // Allow bodyweight exercises as fallback
-        if (exercise.equipment !== 'bodyweight' && 
-            exercise.equipment && 
-            !params.availableEquipment.includes(exercise.equipment)) return false;
-        return true;
+      // warm-up / cooldown simple scaffolding: 6–10 min total if room
+      const warmOk = Math.max(0, params.preferredDuration - duration) >= 6;
+      const coolOk = Math.max(0, params.preferredDuration - duration - (warmOk ? 6 : 0)) >= 4;
+      const warm = warmOk ? await this.generateWarmup(trimmed, 6) : undefined;
+      const cool = coolOk ? await this.generateCooldown(trimmed, 4) : undefined;
+
+      workouts.push({
+        name: `${this.titleFor(type, day)} ${Math.floor(day / this.cycleLen(type)) + 1}`.trim(),
+        exercises: trimmed,
+        warmup: warm,
+        cooldown: cool,
+        estimated_duration: duration + (warmOk ? 6 : 0) + (coolOk ? 4 : 0),
+        session_type: sessionType,
       });
     }
 
-    // If still no matches, try similar movement patterns
-    if (availableExercises.length === 0) {
-      console.log(`No matches for ${pattern}, trying similar patterns...`);
-      const similarPatterns = this.getSimilarPatterns(pattern);
-      
-      for (const similarPattern of similarPatterns) {
-        availableExercises = this.exercises.filter(exercise => {
-          if (exercise.movement_pattern !== similarPattern) return false;
-          if (alreadySelected.some(selected => selected.exercise_id === exercise.id)) return false;
-          if (params.dislikedExercises.includes(exercise.id)) return false;
-          // Prefer bodyweight exercises in fallback
-          if (exercise.equipment !== 'bodyweight' && 
-              exercise.equipment && 
-              !params.availableEquipment.includes(exercise.equipment)) return false;
-          return true;
-        });
-        
-        if (availableExercises.length > 0) break;
+    return workouts;
+  }
+
+  private determineProgramType(p: WorkoutGenerationParams) {
+    if (p.weeklyAvailability <= 3) return "full_body";
+    if (p.weeklyAvailability === 4) return "upper_lower";
+    return "push_pull_legs";
+  }
+
+  private cycleLen(type: string) {
+    return type === "push_pull_legs" ? 3 : type === "upper_lower" ? 2 : 1;
+  }
+
+  private titleFor(type: string, day: number) {
+    if (type === "push_pull_legs") return ["Push", "Pull", "Legs"][day % 3];
+    if (type === "upper_lower") return day % 2 === 0 ? "Upper" : "Lower";
+    return "Full Body";
+  }
+
+  private dayTemplate(type: string, p: WorkoutGenerationParams, day: number) {
+    const sch = repsScheme(p.trainingFocus, p.trainingExperience);
+    const core = [
+      { pattern: "squat", sets: sch.compoundSets, reps: sch.compoundReps, priority: 1 as const },
+      { pattern: "hinge", sets: sch.compoundSets, reps: sch.compoundReps, priority: 1 as const },
+      { pattern: "push_horizontal", sets: sch.compoundSets, reps: sch.compoundReps, priority: 1 as const },
+      { pattern: "pull_horizontal", sets: sch.compoundSets, reps: sch.compoundReps, priority: 1 as const },
+      { pattern: "push_vertical", sets: sch.isoSets, reps: sch.isoReps, priority: 2 as const },
+      { pattern: "pull_vertical", sets: sch.isoSets, reps: sch.isoReps, priority: 2 as const },
+    ];
+
+    if (type === "full_body") return core.slice(0, 4).concat([{ pattern: "isolation", sets: sch.isoSets, reps: sch.isoReps, priority: 2 as const }]);
+
+    if (type === "upper_lower") {
+      const upper = [
+        { pattern: "push_horizontal", sets: sch.compoundSets, reps: sch.compoundReps, priority: 1 as const },
+        { pattern: "pull_horizontal", sets: sch.compoundSets, reps: sch.compoundReps, priority: 1 as const },
+        { pattern: "push_vertical", sets: sch.compoundSets, reps: sch.compoundReps, priority: 1 as const },
+        { pattern: "pull_vertical", sets: sch.compoundSets, reps: sch.compoundReps, priority: 1 as const },
+        { pattern: "isolation", sets: sch.isoSets, reps: sch.isoReps, priority: 2 as const },
+      ];
+      const lower = [
+        { pattern: "squat", sets: sch.compoundSets, reps: sch.compoundReps, priority: 1 as const },
+        { pattern: "hinge", sets: sch.compoundSets, reps: sch.compoundReps, priority: 1 as const },
+        { pattern: "lunge", sets: sch.compoundSets, reps: sch.compoundReps, priority: 1 as const },
+        { pattern: "isolation", sets: sch.isoSets, reps: sch.isoReps, priority: 2 as const },
+      ];
+      return day % 2 === 0 ? upper : lower;
+    }
+
+    // push/pull/legs
+    const push = [
+      { pattern: "push_horizontal", sets: sch.compoundSets, reps: sch.compoundReps, priority: 1 as const },
+      { pattern: "push_vertical", sets: sch.compoundSets, reps: sch.compoundReps, priority: 1 as const },
+      { pattern: "isolation", sets: sch.isoSets, reps: sch.isoReps, priority: 2 as const },
+    ];
+    const pull = [
+      { pattern: "pull_horizontal", sets: sch.compoundSets, reps: sch.compoundReps, priority: 1 as const },
+      { pattern: "pull_vertical", sets: sch.compoundSets, reps: sch.compoundReps, priority: 1 as const },
+      { pattern: "isolation", sets: sch.isoSets, reps: sch.isoReps, priority: 2 as const },
+    ];
+    const legs = [
+      { pattern: "squat", sets: sch.compoundSets, reps: sch.compoundReps, priority: 1 as const },
+      { pattern: "hinge", sets: sch.compoundSets, reps: sch.compoundReps, priority: 1 as const },
+      { pattern: "lunge", sets: sch.compoundSets, reps: sch.compoundReps, priority: 1 as const },
+      { pattern: "isolation", sets: sch.isoSets, reps: sch.isoReps, priority: 2 as const },
+    ];
+    return [push, pull, legs][day % 3];
+  }
+
+  private populate(template: any[], p: WorkoutGenerationParams, caps: Record<string, number>, rand: () => number) {
+    const out: Slot[] = [];
+    for (let i = 0; i < template.length; i++) {
+      const slot = template[i];
+      const ex = this.selectExerciseForPattern(slot.pattern, p, out);
+      if (!ex) continue;
+      const capLeft = caps[slot.pattern] ?? caps["isolation"] ?? 0;
+      if (capLeft <= 0) continue;
+      const sets = Math.max(1, Math.min(slot.sets, capLeft));
+      const rest = restSeconds(slot.priority, p.trainingFocus);
+      out.push({
+        exercise_id: ex.id,
+        exercise_name: ex.name,
+        sets,
+        reps: slot.reps,
+        rest_seconds: rest,
+        order_index: out.length,
+        movement_pattern: ex.movement_pattern,
+        muscle_groups: ex.muscle_groups,
+        notes: ex.instructions?.substring(0, 100),
+        priority: slot.priority,
+      });
+      caps[slot.pattern] = capLeft - sets;
+    }
+
+    const sessionType = this.determineSessionType(template);
+    return { exercises: out, sessionType };
+  }
+
+  private timeBox(exs: Slot[], targetMin: number, focus: string) {
+    const copy = exs.map(e => ({ ...e }));
+    const maxMin = Math.max(15, targetMin || 45);
+
+    const total = () => copy.reduce((m, s) => m + estimateMinutes(s.sets, s.rest_seconds), 0);
+
+    // 1) Trim accessory sets first
+    let minutes = total();
+    for (let i = copy.length - 1; i >= 0 && minutes > maxMin; i--) {
+      if ((copy[i].priority || 2) === 2 && copy[i].sets > 1) {
+        copy[i].sets -= 1;
+        minutes = total();
       }
     }
-
-    console.log(`Found ${availableExercises.length} candidates for pattern ${pattern}`);
-    
-    if (availableExercises.length === 0) {
-      console.log(`No exercises found for pattern ${pattern}, trying final fallback...`);
-      // Last resort: any unused exercise with available equipment
-      availableExercises = this.exercises.filter(exercise => {
-        if (alreadySelected.some(selected => selected.exercise_id === exercise.id)) return false;
-        if (params.dislikedExercises.includes(exercise.id)) return false;
-        // Must have compatible equipment or be bodyweight
-        if (exercise.equipment && 
-            exercise.equipment !== 'bodyweight' && 
-            !params.availableEquipment.includes(exercise.equipment)) return false;
-        return true;
-      });
+    // 2) Drop last accessory exercises if still over
+    for (let i = copy.length - 1; i >= 0 && minutes > maxMin; i--) {
+      if ((copy[i].priority || 2) === 2) {
+        copy.splice(i, 1);
+        minutes = total();
+      }
     }
-
-    if (availableExercises.length === 0) {
-      console.warn(`No suitable exercises found for pattern ${pattern}`);
-      return null;
+    // 3) If still over, reduce secondary rest times a bit for endurance/general
+    if (minutes > maxMin && (focus === "endurance" || focus === "general_fitness")) {
+      for (const s of copy) if ((s.priority || 2) === 2) s.rest_seconds = Math.max(30, Math.round(s.rest_seconds * 0.75));
+      minutes = total();
     }
-
-    // Prioritize compound movements
-    const compoundExercises = availableExercises.filter(ex => ex.is_compound);
-    const targetExercises = compoundExercises.length > 0 ? compoundExercises : availableExercises;
-
-    // Return random exercise from available options
-    return targetExercises[Math.floor(Math.random() * targetExercises.length)];
-  }
-
-  private getSimilarPatterns(pattern: string): string[] {
-    const patternMap: Record<string, string[]> = {
-      'push_vertical': ['push_horizontal', 'isolation'],
-      'push_horizontal': ['push_vertical', 'isolation'],
-      'pull_vertical': ['pull_horizontal', 'isolation'],
-      'pull_horizontal': ['pull_vertical', 'isolation'],
-      'squat': ['lunge', 'hinge'],
-      'hinge': ['squat', 'lunge'],
-      'lunge': ['squat', 'hinge'],
-      'isolation': ['carry', 'rotation'],
-      'carry': ['isolation'],
-      'rotation': ['isolation']
-    };
-    
-    return patternMap[pattern] || ['isolation'];
-  }
-
-  private calculateRestTime(priority: number, focus: string): number {
-    const baseRest = {
-      strength: { primary: 180, secondary: 120 },
-      hypertrophy: { primary: 90, secondary: 60 },
-      endurance: { primary: 60, secondary: 45 },
-      general_fitness: { primary: 90, secondary: 60 }
-    };
-
-    const restTimes = baseRest[focus as keyof typeof baseRest];
-    return priority === 1 ? restTimes.primary : restTimes.secondary;
+    return copy;
   }
 
   private determineSessionType(template: any[]): string {
-    const patterns = template.map(slot => slot.pattern);
-    
-    if (patterns.includes('squat') && patterns.includes('hinge') && patterns.includes('push_horizontal')) {
-      return 'full_body';
-    }
-    if (patterns.includes('push_horizontal') && patterns.includes('push_vertical')) {
-      return 'push';
-    }
-    if (patterns.includes('pull_horizontal') && patterns.includes('pull_vertical')) {
-      return 'pull';
-    }
-    if (patterns.includes('squat') && patterns.includes('hinge')) {
-      return 'legs';
-    }
-    
-    return 'mixed';
+    const patterns = template.map((t: any) => t.pattern);
+    if (patterns.includes("squat") && patterns.includes("hinge") && patterns.includes("push_horizontal")) return "full_body";
+    if (patterns.includes("push_horizontal") && patterns.includes("push_vertical")) return "push";
+    if (patterns.includes("pull_horizontal") && patterns.includes("pull_vertical")) return "pull";
+    if (patterns.includes("squat") && patterns.includes("hinge")) return "legs";
+    return "mixed";
   }
 
-  private async generateWarmup(mainExercises: any[], duration: number) {
-    const targetMuscleGroups = this.extractMuscleGroups(mainExercises);
-    const warmupExercises = this.exercises.filter(ex => ex.category === 'warm_up');
-    
-    const selectedWarmups: any[] = [];
-    const targetCount = Math.min(6, Math.max(3, Math.floor(duration / 1.5))); // 3-6 exercises based on duration
-    
-    // Prioritize exercises that target the main muscle groups
-    for (const muscle of targetMuscleGroups.slice(0, 4)) {
-      const relevantExercises = warmupExercises.filter(ex => 
-        ex.muscle_groups.includes(muscle) && !selectedWarmups.find(s => s.exercise_id === ex.id)
-      );
-      
-      if (relevantExercises.length > 0) {
-        const exercise = relevantExercises[Math.floor(Math.random() * relevantExercises.length)];
-        selectedWarmups.push({
-          exercise_id: exercise.id,
-          exercise_name: exercise.name,
-          sets: 1,
-          reps: exercise.name.includes('Hold') || exercise.name.includes('Stretch') ? 30 : 10,
-          rest_seconds: 15,
-          order_index: selectedWarmups.length,
-          notes: exercise.instructions || '',
-          movement_pattern: exercise.movement_pattern,
-          muscle_groups: exercise.muscle_groups
-        });
-      }
-    }
-    
-    // Fill remaining slots with general mobility exercises
-    while (selectedWarmups.length < targetCount) {
-      const remaining = warmupExercises.filter(ex => 
-        !selectedWarmups.find(s => s.exercise_id === ex.id) &&
-        (ex.movement_pattern === 'general_movement' || ex.movement_pattern === 'spinal_mobility')
-      );
-      
-      if (remaining.length === 0) break;
-      
-      const exercise = remaining[Math.floor(Math.random() * remaining.length)];
-      selectedWarmups.push({
-        exercise_id: exercise.id,
-        exercise_name: exercise.name,
-        sets: 1,
-        reps: exercise.name.includes('seconds') ? 30 : 10,
-        rest_seconds: 15,
-        order_index: selectedWarmups.length,
-        notes: exercise.instructions || '',
-        movement_pattern: exercise.movement_pattern,
-        muscle_groups: exercise.muscle_groups
-      });
-    }
-    
-    return selectedWarmups.slice(0, targetCount);
-  }
+  private selectExerciseForPattern(pattern: string, p: WorkoutGenerationParams, already: Slot[]) {
+    const expList = ["beginner", "intermediate", "advanced"];
+    const allowedExp = expList.slice(0, expList.indexOf(p.trainingExperience) + 1);
 
-  private async generateCooldown(mainExercises: any[], duration: number) {
-    const targetMuscleGroups = this.extractMuscleGroups(mainExercises);
-    const cooldownExercises = this.exercises.filter(ex => ex.category === 'cool_down');
-    
-    const selectedCooldowns: any[] = [];
-    const targetCount = Math.min(6, Math.max(3, Math.floor(duration / 1.5))); // 3-6 exercises based on duration
-    
-    // Prioritize stretches for the main muscle groups worked
-    for (const muscle of targetMuscleGroups.slice(0, 4)) {
-      const relevantExercises = cooldownExercises.filter(ex => 
-        ex.muscle_groups.includes(muscle) && !selectedCooldowns.find(s => s.exercise_id === ex.id)
-      );
-      
-      if (relevantExercises.length > 0) {
-        const exercise = relevantExercises[Math.floor(Math.random() * relevantExercises.length)];
-        selectedCooldowns.push({
-          exercise_id: exercise.id,
-          exercise_name: exercise.name,
-          sets: 1,
-          reps: 30, // Hold time in seconds for stretches
-          rest_seconds: 10,
-          order_index: selectedCooldowns.length,
-          notes: exercise.instructions || '',
-          movement_pattern: exercise.movement_pattern,
-          muscle_groups: exercise.muscle_groups
-        });
-      }
-    }
-    
-    // Fill remaining slots with general stretches and breathing
-    while (selectedCooldowns.length < targetCount) {
-      const remaining = cooldownExercises.filter(ex => 
-        !selectedCooldowns.find(s => s.exercise_id === ex.id) &&
-        (ex.movement_pattern === 'breathing' || ex.movement_pattern === 'back_stretch' || ex.movement_pattern === 'spinal_stretch')
-      );
-      
-      if (remaining.length === 0) break;
-      
-      const exercise = remaining[Math.floor(Math.random() * remaining.length)];
-      selectedCooldowns.push({
-        exercise_id: exercise.id,
-        exercise_name: exercise.name,
-        sets: 1,
-        reps: exercise.name.includes('Breathing') ? 300 : 30, // 5 minutes for breathing, 30 seconds for stretches
-        rest_seconds: 10,
-        order_index: selectedCooldowns.length,
-        notes: exercise.instructions || '',
-        movement_pattern: exercise.movement_pattern,
-        muscle_groups: exercise.muscle_groups
-      });
-    }
-    
-    return selectedCooldowns.slice(0, targetCount);
-  }
-
-  private extractMuscleGroups(exercises: any[]): string[] {
-    const muscleGroups = new Set<string>();
-    exercises.forEach(ex => {
-      ex.muscle_groups.forEach((mg: string) => muscleGroups.add(mg));
+    // strict filter
+    let candidates = this.exercises.filter((ex) => {
+      if (ex.movement_pattern !== pattern) return false;
+      if (!allowedExp.includes(ex.experience_level)) return false;
+      if (ex.equipment && !p.availableEquipment.includes(ex.equipment)) return false;
+      if (p.dislikedExercises.includes(ex.id)) return false;
+      if (already.some((s) => s.exercise_id === ex.id)) return false;
+      return true;
     });
-    return Array.from(muscleGroups);
+
+    // relax equipment to allow bodyweight
+    if (!candidates.length) {
+      candidates = this.exercises.filter((ex) => {
+        if (ex.movement_pattern !== pattern) return false;
+        if (already.some((s) => s.exercise_id === ex.id)) return false;
+        if (p.dislikedExercises.includes(ex.id)) return false;
+        if (ex.equipment && ex.equipment !== "bodyweight" && !p.availableEquipment.includes(ex.equipment)) return false;
+        return true;
+      });
+    }
+
+    // try similar patterns
+    if (!candidates.length) {
+      for (const alt of this.getSimilarPatterns(pattern)) {
+        candidates = this.exercises.filter((ex) => {
+          if (ex.movement_pattern !== alt) return false;
+          if (already.some((s) => s.exercise_id === ex.id)) return false;
+          if (p.dislikedExercises.includes(ex.id)) return false;
+          if (ex.equipment && ex.equipment !== "bodyweight" && !p.availableEquipment.includes(ex.equipment)) return false;
+          return true;
+        });
+        if (candidates.length) break;
+      }
+    }
+
+    if (!candidates.length) return null;
+
+    // prefer compound
+    const compounds = candidates.filter((c: any) => c.is_compound);
+    const pool = compounds.length ? compounds : candidates;
+    // seeded pick for deterministic variation per user/week
+    const seed = xmur3(JSON.stringify({ pattern, equip: p.availableEquipment, dislike: p.dislikedExercises, week: weekSeed() }))();
+    const rand = mulberry32(seed);
+    return seededPick(pool, rand);
+  }
+
+  private getSimilarPatterns(pattern: string): string[] {
+    const map: Record<string, string[]> = {
+      push_vertical: ["push_horizontal", "isolation"],
+      push_horizontal: ["push_vertical", "isolation"],
+      pull_vertical: ["pull_horizontal", "isolation"],
+      pull_horizontal: ["pull_vertical", "isolation"],
+      squat: ["lunge", "hinge"],
+      hinge: ["squat", "lunge"],
+      lunge: ["squat", "hinge"],
+      isolation: ["carry", "rotation"],
+      carry: ["isolation"],
+      rotation: ["isolation"],
+    };
+    return map[pattern] || ["isolation"];
+  }
+
+  private async generateWarmup(main: Slot[], minutes: number) {
+    const target = Math.max(3, Math.min(6, Math.floor(minutes / 1.5)));
+    const groups = this.extractMuscles(main).slice(0, 4);
+    const pool = this.exercises.filter((e) => e.category === "warm_up");
+    const picks: Slot[] = [];
+    for (const g of groups) {
+      const match = pool.filter((e) => e.muscle_groups?.includes(g) && !picks.find((s) => s.exercise_id === e.id));
+      if (match.length) {
+        const ex = match[Math.floor(Math.random() * match.length)];
+        picks.push({
+          exercise_id: ex.id,
+          exercise_name: ex.name,
+          sets: 1,
+          reps: ex.name.includes("Hold") ? 30 : 10,
+          rest_seconds: 15,
+          order_index: picks.length,
+          movement_pattern: ex.movement_pattern,
+          muscle_groups: ex.muscle_groups || [],
+        });
+      }
+    }
+    return picks.slice(0, target);
+  }
+
+  private async generateCooldown(main: Slot[], minutes: number) {
+    const target = Math.max(3, Math.min(6, Math.floor(minutes / 1.5)));
+    const groups = this.extractMuscles(main).slice(0, 4);
+    const pool = this.exercises.filter((e) => e.category === "cool_down");
+    const picks: Slot[] = [];
+    for (const g of groups) {
+      const match = pool.filter((e) => e.muscle_groups?.includes(g) && !picks.find((s) => s.exercise_id === e.id));
+      if (match.length) {
+        const ex = match[Math.floor(Math.random() * match.length)];
+        picks.push({
+          exercise_id: ex.id,
+          exercise_name: ex.name,
+          sets: 1,
+          reps: 30,
+          rest_seconds: 10,
+          order_index: picks.length,
+          movement_pattern: ex.movement_pattern,
+          muscle_groups: ex.muscle_groups || [],
+        });
+      }
+    }
+    return picks.slice(0, target);
+  }
+
+  private extractMuscles(exs: Slot[]) {
+    const s = new Set<string>();
+    exs.forEach((e) => (e.muscle_groups || []).forEach((m) => s.add(m)));
+    return Array.from(s);
   }
 
   async findExerciseAlternative(exerciseId: string, params: WorkoutGenerationParams) {
-    // First try to find pre-defined alternatives
-    const { data: alternatives } = await supabase
-      .from('exercise_alternatives')
-      .select('alternative_exercise_id')
-      .eq('primary_exercise_id', exerciseId);
+    const { data: alts } = await supabase
+      .from("exercise_alternatives")
+      .select("alternative_exercise_id")
+      .eq("primary_exercise_id", exerciseId);
 
-    if (alternatives && alternatives.length > 0) {
-      // Get the actual exercise details
-      const { data: exerciseDetails } = await supabase
-        .from('exercises')
-        .select('*')
-        .in('id', alternatives.map(alt => alt.alternative_exercise_id));
-
-      if (exerciseDetails) {
-        const validAlternatives = exerciseDetails.filter(exercise => 
-          !params.dislikedExercises.includes(exercise.id) &&
-          (!exercise.equipment || params.availableEquipment.includes(exercise.equipment))
-        );
-
-        if (validAlternatives.length > 0) {
-          return validAlternatives[0];
-        }
-      }
+    if (alts?.length) {
+      const ids = alts.map((a: any) => a.alternative_exercise_id);
+      const { data: details } = await supabase.from("exercises").select("*").in("id", ids);
+      const valid = (details || []).filter(
+        (e: any) => !params.dislikedExercises.includes(e.id) && (!e.equipment || params.availableEquipment.includes(e.equipment))
+      );
+      if (valid.length) return valid[0];
     }
 
-    // If no pre-defined alternatives, find similar exercises by movement pattern
-    const originalExercise = this.exercises.find(ex => ex.id === exerciseId);
-    if (!originalExercise) return null;
-
-    return this.selectExerciseForPattern(
-      originalExercise.movement_pattern,
-      params,
-      [{ exercise_id: exerciseId }]
-    );
+    const original = this.exercises.find((e) => e.id === exerciseId);
+    if (!original) return null;
+    return this.selectExerciseForPattern(original.movement_pattern, params, [{ exercise_id: exerciseId } as any]);
   }
 }
