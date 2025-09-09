@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 // Adjust this import if your client lives elsewhere, e.g. "@/supabaseClient"
-import { supabase } from "../integrations/supabase/client";
+import { supabase } from "@/integrations/supabase/client";
 
 export type Preferences = {
   goal: "strength" | "hypertrophy" | "endurance" | "fat_loss";
